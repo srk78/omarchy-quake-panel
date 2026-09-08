@@ -10,7 +10,7 @@ import "Ui"
 //   quickshell -p shell/shell.qml
 //
 // A single fullscreen Wayland layer-shell window pinned to the DK-QUAKE panel's output,
-// hosting the kiosk UI. See ../PLAN.md / README.md for the full architecture.
+// hosting the kiosk UI. See ../README.md / ../HISTORY.md for the full architecture.
 //
 // Touch does NOT go through Qt/Wayland's normal input path here — see TouchRouter.qml for
 // why (a confirmed, unresolved Hyprland bug means layer-shell surfaces never receive
@@ -40,6 +40,11 @@ ShellRoot {
         root.hidBridge.touchEvent.connect(root.touchRouter.feed)
         root.hidBridge.daemonError.connect(function (message) { console.log("[daemon error] " + message) })
         root.personalCareState.reminder.connect(function (message) { panelWindow.toast.show(message) })
+        // Dev/verification only: OQP_START_PAGE=<index> opens on that page, so a screenshot
+        // run (see .claude/skills/omarchy-design/scripts/capture-panel.sh) can capture any
+        // page without someone physically turning the knob. Normal launches never set it.
+        var startPage = parseInt(Quickshell.env("OQP_START_PAGE") || "", 10)
+        if (!isNaN(startPage)) root.knobRouter.currentPageIndex = startPage
     }
 
     PanelWindow {

@@ -69,6 +69,26 @@ live on the Everforest theme: foreground `#d3c6aa` — warm cream — over backg
 `#2d353b` — cool dark — blended at 0.4 alpha reads distinctly brownish; the same blend at
 0.12 is subtle enough not to fight the background hue).
 
+**Selected fill blends `foreground`, not `accent`**: `Style.selectedStateColor` falls back
+to `foreground` (`Style.qml:135-137`), so `selectedFillFor(...)` = foreground @ 0.18 by
+default, and `Ui/Button.qml`'s selected text is that same resolved color, bold — accent
+only enters if a theme's `shell.toml` overrides the selected-color token.
+
+## Hero captions ARE letter-spaced; section headers are NOT
+
+Two different small-caps captions, easy to conflate:
+
+- `Ui/PanelHero.qml:100` and the bluetooth hero (`Panel.qml:758`): the hero's uppercase
+  `meta` caption is `caption` size, bold, `Qt.darker(foreground, 1.4)`, **`letterSpacing:
+  1.2`**. The clock panel uses `1` in the same role.
+- `Ui/PanelSectionHeader.qml`: a section label ("CONNECTED", "PAIRED DEVICES") is the same
+  color/weight/size with **no** letter-spacing, plus `topPadding: ceil(fontSize * 0.15)`
+  to reserve the Nerd Font ascent overshoot.
+
+`Ui/PanelHero.qml` is the canonical hero: a `display`-size glyph on the left, a
+`title`-size bold title, the letter-spaced meta caption under it, an optional bordered
+`detail` pill on the title row, and an optional trailing control on the right edge.
+
 ## Secondary/status text — darkened foreground, not a separate muted swatch
 
 Both `Ui/PanelSectionHeader.qml:18` (the "CONNECTED"-style section caption) and inline
@@ -119,7 +139,10 @@ Text { text: "󰌾"; color: ...; font.family: root.bar.fontFamily; font.pixelSiz
 ```
 
 Verified glyphs in use: `󰌾` (lock — network requires credentials), `󰅙` (cancel/forget),
-`󰄬` (checkmark — connect action), `󰂱`/`󰂯` (bluetooth connected/idle). This machine's
+`󰄬` (checkmark — connect action), `󰂱`/`󰂯` (bluetooth connected/idle), `󰍹`/`󰍺`
+(monitor panel). To check a codepoint exists before using it, query the resolved font
+file's charset — `fc-query --format='%{charset}' "$(fc-match -f '%{file}' monospace)"` —
+rather than trusting memory of the Nerd Font cheat sheet. This machine's
 active font is **JetBrainsMono Nerd Font** (`omarchy font current`) — confirmed installed
 via `fc-list`. If you add icon glyphs to a standalone app, set `font.family` to a Nerd
 Font that's actually installed (check `fc-list | grep -i nerd`) — don't assume the exact

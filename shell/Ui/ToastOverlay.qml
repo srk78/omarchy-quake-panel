@@ -3,7 +3,7 @@ import QtQuick
 // Global reminder banner, layered above whatever page is active. Deliberately has NO knob
 // wiring at all — see KnobRouter.qml's header comment for why that's what actually
 // guarantees reminders can never interfere with the pomodoro or page-switching.
-// Colors follow the active Omarchy theme (see Services/Theme.qml).
+// Styled as an Omarchy popup card (Services/Theme.qml): background fill, control border.
 Item {
     id: root
     required property var theme
@@ -25,20 +25,34 @@ Item {
         visible: root.shown
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
-        anchors.topMargin: 16
-        width: Math.min(parent.width - 32, toastText.implicitWidth + 48)
-        height: toastText.implicitHeight + 28
+        anchors.topMargin: root.theme.spacing.panelPadding
+        width: Math.min(parent.width - root.theme.spacing.panelPadding * 2, toastRow.implicitWidth + root.theme.spacing.popupPadding * 2)
+        height: toastRow.implicitHeight + root.theme.spacing.popupPadding * 2
         radius: root.theme.cornerRadius
         color: root.theme.background
-        border.color: root.theme.surfaceBorder
+        border.color: root.theme.controlBorderColor
         border.width: root.theme.borderWidth
 
-        Text {
-            id: toastText
+        Row {
+            id: toastRow
             anchors.centerIn: parent
-            text: root.message
-            color: root.theme.foreground
-            font.pixelSize: 20
+            spacing: root.theme.spacing.xl
+            Text {
+                text: "󰂚"
+                textFormat: Text.PlainText
+                color: root.theme.secondaryForeground
+                font.family: root.theme.font.family
+                font.pixelSize: root.theme.font.display
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                text: root.message
+                textFormat: Text.PlainText
+                color: root.theme.foreground
+                font.family: root.theme.font.family
+                font.pixelSize: root.theme.font.heading
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
 
         TapHandler { onTapped: root.dismiss() } // mouse; see TouchRouter.qml for touch

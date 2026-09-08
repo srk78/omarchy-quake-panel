@@ -78,6 +78,11 @@ for it to come up, and captures with `grim -g <geometry>` — bypassing the inte
 screenshot picker entirely, which grabs whatever monitor currently has focus (almost
 never the panel, since it's a separate output you're not actively clicking into).
 
+Set `OQP_START_PAGE=<index>` (0 = Dashboard, 1 = Self Care) in the script's environment
+to open on a given page — the only way to screenshot a non-default page without someone
+physically turning the knob. Run the script with `< /dev/null` and its output to a file
+when a harness is waiting on it.
+
 The script prints the resolved geometry and the output path, and exits non-zero with the
 shell's log tail if quickshell didn't stay running (usually a QML error `qmllint` missed,
 or a genuine runtime exception — check `/tmp/omarchy-quake-panel-shell.log`).
@@ -108,7 +113,10 @@ Work through this against a real capture before calling a restyle done:
       switch theme with `omarchy theme set <name>` and re-capture)
 - [ ] Every existing touch target still registers with `TouchRouter`, not just
       `TapHandler` — a button that only responds to mouse clicks in a screenshot test but
-      not real touch is a regression, and a screenshot alone won't reveal this
+      not real touch is a regression, and a screenshot alone won't reveal this. Use
+      `Ui/PanelButton` for buttons: it registers itself
+- [ ] Hero meta captions are letter-spaced (1.2); section labels are not — see the
+      conventions doc
 - [ ] Knob rotate/press/hold still do exactly what they did before (page switch, water
       picker, per-page action) — a styling change should never need to touch
       `KnobRouter.qml`'s logic

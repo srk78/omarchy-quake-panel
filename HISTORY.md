@@ -99,8 +99,12 @@ shape).
     real conventions from installed source (`/usr/share/omarchy/shell/`, primarily the
     Wi-Fi and bluetooth panels) rather than guessing. See §5.
 11. **Styling pass using that skill** — applied the verified tokens to `DashboardPage.qml`
-    and `PersonalCarePage.qml` (this was the most recent work in this session before this
-    file was written — see §5 for exactly what changed and §6 for what's left).
+    and `PersonalCarePage.qml` (see §5).
+12. **Initial git commit** (2026-09-08) — everything above finally committed on `master`.
+13. **Layout + styling pass, second round** (2026-09-08) — the full-width redesign
+    described in §5a: Omarchy's font alias and font/spacing scale, shared `Ui/`
+    components, a hero page header, both pages laid out for the 1920x480 aspect, and the
+    two overlays brought onto the same tokens.
 
 ## 4. Hard-won bugs and fixes (read before touching the related code)
 
@@ -208,6 +212,50 @@ plain `theme.muted` body/status text usage were all switched to the new tokens. 
 via `qmllint` (clean) and a real capture on the physical panel (both pages screenshotted
 and sent to the user for review).
 
+### 5a. Second styling round — full-width layout (2026-09-08)
+
+Triggered by "improve the layout and styling by using /omarchy-design". Verified against
+the same installed source; two corrections to the conventions doc came out of it (the
+hero meta caption IS letter-spaced at 1.2 while section headers are not; the selected
+fill blends foreground, not accent — `Theme.selectedFill` had accent, now fixed).
+
+- **`Theme.qml` became the `Style.qml` equivalent too**: `fontFamily: "monospace"` (the
+  fontconfig alias Omarchy's own `Style.font.family` binds to — follows `omarchy font set`
+  with no hardcoded family, and brings Nerd Font glyphs along), a single kiosk `scale`
+  (1.5) over Omarchy's 12px base, `font.*` tokens with Omarchy's names/multipliers plus a
+  kiosk-only `hero` size, `spacing.*` named tokens plus `touchControlHeight`, and
+  `pressedFill` (0.22). `surfaceBorder` is gone.
+- **Shared `shell/Ui/` components** replaced the per-page inline ones: `Card`,
+  `SectionLabel` (optional leading glyph), `SectionSeparator` (`vertical: true` for
+  side-by-side sections), `PanelButton` (Omarchy Button states: transparent at rest,
+  pressed fill, optional icon — and it **registers itself with `TouchRouter`**, so a page
+  can no longer forget to), and `PageHeader` (PanelHero: glyph, title, letter-spaced
+  status caption; trailing read-only page tabs + clock).
+- **`PageHost` owns the header** and the page `Loader`; pages expose an optional
+  `heroMeta` string for the caption (Self Care shows "WORK · 12:34 LEFT" / "POMODORO
+  PAUSED"; Dashboard shows the hostname, read from `/etc/hostname` in PageHost so
+  `SystemStats` stayed untouched).
+- **Self Care** is still one combined card (the earlier user decision), but its three
+  sections now sit side by side across the full width, split by vertical separators, each
+  with a hero value and its action button pinned to the bottom so the buttons share a
+  baseline. The stand line no longer clips. Glyphs: 󱎫 󰖌 󰖃, buttons 󰐊/󰏤 and 󰅶.
+- **Dashboard**: same three cards, now with glyph labels (󰻠 󰍛 󰛳), hero % with the
+  detail on its baseline (core count, used/total in GB), sparklines that take the
+  remaining height, per-core bars over a faint track, and 󰇚/󰕒 rate glyphs with MB/s
+  formatting.
+- **Overlays**: `ToastOverlay` (bell glyph, popup padding) and `WaterAmountPicker`
+  (finger-sized options, selected = foreground @ 0.18 + bold, no accent border) on the
+  same tokens.
+- **Dev-only `OQP_START_PAGE` env var** in `shell.qml`'s `Component.onCompleted` picks the
+  initial page so `capture-panel.sh` can screenshot any page without turning the knob.
+  The script now launches quickshell fully detached (`setsid`, `</dev/null`) — the
+  earlier version blocked a harness that piped its output, because the launched shell
+  inherited that pipe.
+- **Not verified this round**: the water picker and toast were restyled from source only
+  (no way to trigger them from a script without the knob/touch), and real-touch on the
+  two buttons still needs a physical tap — `PanelButton` registers with `TouchRouter` the
+  same way the old inline buttons did, but only a finger proves it.
+
 ## 6. Current status (as of this file's writing)
 
 **Working end-to-end on real hardware:**
@@ -222,8 +270,8 @@ and sent to the user for review).
   last-amount-remembered picker, stand reminder — all persisted to
   `~/.local/state/omarchy-quake-panel/personal-care.json`.
 - Live theme following (polls `colors.toml` every 3s).
-- Both pages restyled to verified Omarchy conventions (see §5) and screenshotted for
-  review.
+- Both pages restyled to verified Omarchy conventions (see §5/§5a), laid out for the
+  full 1920x480 panel, and screenshotted for review.
 
 **Not yet done** — see `NEXT_STEPS.md` for the actionable list.
 
@@ -243,6 +291,8 @@ and sent to the user for review).
 | Personal Care logic | `shell/Services/PersonalCareState.qml` |
 | Pages | `shell/Pages/*.qml` |
 | Overlays | `shell/Ui/ToastOverlay.qml`, `shell/Ui/WaterAmountPicker.qml` |
+| Shared styled components | `shell/Ui/Card.qml`, `SectionLabel.qml`, `SectionSeparator.qml`, `PanelButton.qml`, `PageHeader.qml` |
+| Page chrome + page switching | `shell/Ui/PageHost.qml` |
 | Styling skill | `.claude/skills/omarchy-design/` |
 | udev/Hyprland/modules-load examples | `ops/` |
 

@@ -1,8 +1,11 @@
 import QtQuick
+import Quickshell.Io
 import "../Pages"
 
-// Swaps between the active pages based on KnobRouter.currentPageIndex. HomeAssistantPage
-// is not wired in yet — see KnobRouter.qml's header comment.
+// Page chrome shared by every page — the hero header (glyph, title, status caption, clock,
+// page indicator) — plus the Loader that swaps the active page below it, driven by
+// KnobRouter.currentPageIndex. HomeAssistantPage is not wired in yet — see
+// KnobRouter.qml's header comment.
 Item {
     id: root
     required property var knobRouter
@@ -12,8 +15,49 @@ Item {
     required property var touchRouter
     required property var theme
 
+    // Glyphs are Nerd Font (Material Design set) codepoints, rendered through the same
+    // fontconfig alias Omarchy uses — see Services/Theme.qml.
+    readonly property var pages: [
+        { icon: "󰓅", title: "Dashboard" },
+        { icon: "󰗶", title: "Self Care" },
+    ]
+    readonly property var pageNames: root.pages.map(function (p) { return p.title })
+    readonly property int pageIndex: Math.max(0, Math.min(root.pages.length - 1, root.knobRouter.currentPageIndex))
+
+    // Dashboard's caption is the machine name — cheap to read here, and it keeps
+    // SystemStats untouched.
+    property string hostname: ""
+    FileView {
+        path: "/etc/hostname"
+        printErrors: false
+        onLoaded: root.hostname = String(text() || "").trim()
+    }
+
+    PageHeader {
+        id: header
+        theme: root.theme
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: root.theme.spacing.panelPadding
+        anchors.bottomMargin: 0
+        icon: root.pages[root.pageIndex].icon
+        title: root.pages[root.pageIndex].title
+        meta: root.pageIndex === 0 ? root.hostname
+            : (pageLoader.item && pageLoader.item.heroMeta !== undefined ? pageLoader.item.heroMeta : "")
+        clock: root.systemStats.clockText
+        pageNames: root.pageNames
+        pageIndex: root.pageIndex
+    }
+
     Loader {
-        anchors.fill: parent
+        id: pageLoader
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.bottom: parent.bottom
+        anchors.margins: root.theme.spacing.panelPadding
+        anchors.topMargin: root.theme.space(12)
         sourceComponent: {
             switch (root.knobRouter.currentPageIndex) {
                 case 0: return dashboardComp

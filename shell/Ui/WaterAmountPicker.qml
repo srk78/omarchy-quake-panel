@@ -5,6 +5,10 @@ import QtQuick
 // was logged last time. Fully knob-drivable while open (KnobRouter redirects rotate to
 // cycle the highlighted option and press to confirm — see KnobRouter.qml), and each
 // option is also directly tappable via TouchRouter.
+//
+// Options follow Omarchy's Ui/Button.qml states: bordered + transparent at rest, the
+// selected one gets the foreground @ 0.18 selected fill and bold text (no accent border —
+// Style.selectedBorderWidth is 0 by default).
 Item {
     id: root
     required property var personalCareState
@@ -54,40 +58,77 @@ Item {
         Rectangle {
             id: card
             anchors.centerIn: parent
-            width: Math.min(parent.width - 80, 760)
-            height: 220
+            width: cardColumn.implicitWidth + root.theme.spacing.popupPadding * 2
+            height: cardColumn.implicitHeight + root.theme.spacing.popupPadding * 2
             radius: root.theme.cornerRadius
             color: root.theme.background
-            border.color: root.theme.surfaceBorder
+            border.color: root.theme.controlBorderColor
             border.width: root.theme.borderWidth
 
             Column {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 14
-
-                Text { text: "How much water?"; color: root.theme.foreground; font.pixelSize: 22; font.bold: true }
+                id: cardColumn
+                anchors.centerIn: parent
+                spacing: root.theme.space(12)
 
                 Row {
-                    spacing: 12
+                    spacing: root.theme.space(10)
+                    Text {
+                        text: "󰖌"
+                        textFormat: Text.PlainText
+                        color: root.theme.foreground
+                        font.family: root.theme.font.family
+                        font.pixelSize: root.theme.font.display
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: "How much water?"
+                        textFormat: Text.PlainText
+                        color: root.theme.foreground
+                        font.family: root.theme.font.family
+                        font.pixelSize: root.theme.font.title
+                        font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                Row {
+                    spacing: root.theme.space(8)
                     Repeater {
                         model: root.presets
                         delegate: Rectangle {
                             id: option
                             required property int index
                             required property int modelData
-                            width: 74; height: 74
+                            readonly property bool current: index === root.selectedIndex
+                            width: root.theme.space(64); height: root.theme.space(64)
                             radius: root.theme.cornerRadius
-                            color: index === root.selectedIndex ? root.theme.selectedFill : root.theme.controlFill
-                            border.color: index === root.selectedIndex ? root.theme.accent : root.theme.surfaceBorder
-                            border.width: index === root.selectedIndex ? 2 : root.theme.borderWidth
+                            color: current ? root.theme.selectedFill : "transparent"
+                            border.color: root.theme.controlBorderColor
+                            border.width: root.theme.borderWidth
+                            Behavior on color { ColorAnimation { duration: 120 } }
 
-                            Text {
+                            Column {
                                 anchors.centerIn: parent
-                                text: option.modelData + "\nml"
-                                horizontalAlignment: Text.AlignHCenter
-                                color: option.index === root.selectedIndex ? root.theme.accent : root.theme.foreground
-                                font.pixelSize: 15
+                                spacing: root.theme.spacing.xs
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: option.modelData
+                                    textFormat: Text.PlainText
+                                    color: root.theme.foreground
+                                    font.family: root.theme.font.family
+                                    font.pixelSize: root.theme.font.heading
+                                    font.bold: option.current
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: "ML"
+                                    textFormat: Text.PlainText
+                                    color: root.theme.secondaryForeground
+                                    font.family: root.theme.font.family
+                                    font.pixelSize: root.theme.font.caption
+                                    font.bold: true
+                                    font.letterSpacing: root.theme.font.heroCaptionSpacing
+                                }
                             }
 
                             TapHandler { onTapped: { root.selectedIndex = option.index; root.confirm() } } // mouse-only, see TouchRouter note
@@ -98,7 +139,13 @@ Item {
                     }
                 }
 
-                Text { text: "Turn the knob to pick, press to confirm — or tap an amount"; color: root.theme.muted; font.pixelSize: 13 }
+                Text {
+                    text: "Turn the knob to pick, press to confirm · or tap an amount"
+                    textFormat: Text.PlainText
+                    color: root.theme.secondaryForeground
+                    font.family: root.theme.font.family
+                    font.pixelSize: root.theme.font.bodySmall
+                }
             }
         }
     }

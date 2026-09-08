@@ -9,8 +9,15 @@
 #   .claude/skills/omarchy-design/scripts/capture-panel.sh [output.png]
 #
 # Requires: the DK-QUAKE panel physically connected and configured in
-# ~/.config/hypr/monitors.lua (see project README/PLAN). Override PANEL_DESC_MATCH if
+# ~/.config/hypr/monitors.lua (see project README). Override PANEL_DESC_MATCH if
 # your panel's Hyprland `description` doesn't contain "DK-QUAKE".
+#
+# To capture a specific page without touching the knob, set OQP_START_PAGE=<index>
+# (0 = Dashboard, 1 = Self Care) — shell.qml reads it once at startup, dev-only:
+#   OQP_START_PAGE=1 .claude/skills/omarchy-design/scripts/capture-panel.sh out.png
+#
+# The launched quickshell is fully detached (setsid, stdin/stdout/stderr off the caller's
+# pipes) so a harness waiting on this script's output can't block until the shell exits.
 set -euo pipefail
 
 ROOT="$(pwd)"
@@ -65,7 +72,7 @@ fi
 ( cd "$ROOT/shell" && qmllint shell.qml Services/*.qml Ui/*.qml Pages/*.qml )
 
 # 4. Launch fresh, detached from this script's own process group.
-( cd "$ROOT" && nohup quickshell -p shell/shell.qml >/tmp/omarchy-quake-panel-shell.log 2>&1 & disown )
+( cd "$ROOT" && setsid nohup quickshell -p shell/shell.qml >/tmp/omarchy-quake-panel-shell.log 2>&1 </dev/null & disown )
 sleep 5
 
 if ! pgrep -f "quickshell -p .*shell/shell\.qml" >/dev/null; then

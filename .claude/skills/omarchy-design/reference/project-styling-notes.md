@@ -16,49 +16,47 @@ changes this — verify fresh if revisiting.
 `reference/omarchy-conventions.md`, not the component names or import paths. Where this
 project needs the equivalent of `Color`, build it into `Theme.qml`; where it needs
 `BorderSurface`/`CursorSurface`, build a small local component in the page that needs it
-(or promote to a shared `Ui/` component if more than one page needs the same shape — this
-project already does this for `Card`/`SectionLabel`/`SectionSeparator`/`PluginButton`,
-currently defined inline per-page via QML's `component Name: ... { }` syntax).
+(or promote to a shared `Ui/` component if more than one page needs the same shape — see
+the `shell/Ui/` table below for what already exists; page-local shapes still use QML's
+`component Name: ... { }` syntax).
 
 ## Current state of this project's styling layer
 
-`shell/Services/Theme.qml` is this project's own `Color.qml` equivalent — it reads the
-same `colors.toml` Omarchy reads (`~/.local/state/omarchy/current/theme/colors.toml`) and
-exposes `background`, `foreground`, `accent`, `muted`, `red`, `green`. It also has a
-`cornerRadius`, `borderWidth`, and a few fill/border helpers — this is this project's
-*first pass* at the Style.qml-equivalent conventions, and it does not yet fully match
-what `reference/omarchy-conventions.md` documents. Known, verified gaps as of this
-writing:
+`shell/Services/Theme.qml` is this project's `Color.qml` **and** `Style.qml` equivalent.
+It reads the same `colors.toml` Omarchy reads and exposes:
 
-- `Theme.surfaceBorder` is currently just `muted` (a flat, opaque color) for **all**
-  borders — both plain separators and interactive control borders. The verified Omarchy
-  convention uses **alpha-blended `foreground`** for both, but at *different* strengths:
-  ~0.12 for a plain separator line, ~0.4 for an interactive control's border (see the
-  conventions doc's "State fills and borders" section for exactly why flattening this to
-  one opaque color is a regression, not a simplification — it was a fix for making a
-  *separator* look better, at the cost of drifting from the real convention for
-  *control* borders. A styling pass should reintroduce the two-strength alpha-blended
-  approach: something like `Theme.separatorColor` (foreground @ 0.12) and
-  `Theme.controlBorderColor` (foreground @ 0.4), rather than one `surfaceBorder` for both.
-- No `Qt.darker(foreground, 1.4)`-style "secondary text" helper exists yet — pages
-  currently reach for `theme.muted` for this purpose. Per the verified convention, prefer
-  a darkened-foreground helper for text that's secondary *within a surface already using
-  a specific foreground*, and reserve `theme.muted` for cases where the foundational
-  theme role is genuinely what's wanted.
-- No hover/selected/pressed state distinction exists anywhere in this project yet (no
-  `CursorSurface` equivalent). This matters less here than in Omarchy's own mouse-driven
-  bar: **this is a touch panel** (see Preserve Behavior below) — there is no hover concept
-  at all on real hardware. Where a "state" distinction is worth adding, it should
-  distinguish **pressed** (finger currently down on a button — already tracked in
-  `PluginButton`'s `tapHandler.pressed`, which only fires for mouse in dev/testing since
-  real touch bypasses `TapHandler` entirely, see Preserve Behavior) from **idle**, not
-  hover-vs-selected in the mouse-UI sense.
-- No icon glyphs are used anywhere in this project yet. If a styling pass wants to add
-  them (e.g. a lock glyph, a signal-strength glyph), confirm a Nerd Font is actually
-  installed and reachable (`fc-list | grep -i nerd`) before hardcoding a `font.family` —
-  don't copy `JetBrainsMono Nerd Font` verbatim as if it were a fixed Omarchy constant;
-  it's this particular machine's currently-selected font (`omarchy font current`), a user
-  preference that can change.
+- Colors: `background`, `foreground`, `accent`, `muted`, `red`, `green`, plus the verified
+  derived roles `separatorColor` (fg @ 0.12), `controlBorderColor` (fg @ 0.4),
+  `secondaryForeground` (`Qt.darker(fg, 1.4)`), and the state fills `controlFill` (0.04),
+  `controlFillHover` (0.08), `selectedFill` (0.18), `pressedFill` (0.22) — all blended
+  from **foreground**, matching `Style.qml`'s defaults (selected is not accent-tinted).
+- `fontFamily: "monospace"` — the fontconfig alias, exactly what Omarchy's `Style.font.family`
+  binds to, so `omarchy font set` is followed without a hardcoded family and Nerd Font
+  glyphs come along for free.
+- `scale` (1.5) — one kiosk factor applied to Omarchy's 12px base and to spacing, since
+  the panel is read from arm's length. `font.*` carries the same token names/multipliers
+  as `Style.font.*` (`caption` … `displayLarge`) plus a kiosk-only `hero` for the one
+  glanceable number per section; `spacing.*` mirrors the named `Style.spacing` tokens,
+  plus `touchControlHeight` for finger-sized buttons. `space(px)` = `Style.space(px)`.
+
+Shared components in `shell/Ui/` (each takes `required property var theme`):
+
+| Component | Omarchy equivalent | Notes |
+|---|---|---|
+| `Card` | `Ui/PopupCard.qml` surface | background fill + control-alpha border, sharp corners |
+| `SectionLabel` | `Ui/PanelSectionHeader.qml` | optional leading glyph; no letter-spacing |
+| `SectionSeparator` | `Ui/PanelSeparator.qml` | `vertical: true` splits side-by-side sections |
+| `PanelButton` | `Ui/Button.qml` (bordered) | transparent at rest, `pressedFill` when down, optional `icon`; **registers itself with `TouchRouter`** via its `touchRouter` property |
+| `PageHeader` | `Ui/PanelHero.qml` | glyph + title + letter-spaced meta caption; trailing read-only page tabs (`selectedFill` + bold) and clock |
+
+`Ui/PageHost.qml` owns the header and the page `Loader`; pages fill the area below and
+may expose a `heroMeta` string for the header's caption. Both pages, `ToastOverlay` and
+`WaterAmountPicker` are on these tokens; nothing references a flat `surfaceBorder` or
+`theme.muted` for text any more.
+
+Still true: there is no hover concept on the real hardware (touch panel), so the only
+state distinction worth drawing is pressed vs idle, and the page tabs are display-only —
+the knob switches pages.
 
 ## Preserve behavior — do not touch these while restyling
 
@@ -89,9 +87,10 @@ see project memory `project_omarchy_quake_panel.md` for the debugging history):
   and persisted state. Touch only their visual consumers (the pages), not their
   properties/functions/signals.
 - **`shell/shell.qml`**'s window setup (`WlrLayershell.layer`, `exclusionMode`, the
-  `Component.onCompleted` wiring) — this is what pins the app to the panel's output,
-  fully covers Omarchy's own bar on that output, and connects the daemon/knob/touch
-  signal chain. A styling task should not need to touch this file at all beyond passing a
+  `Component.onCompleted` wiring — the one dev-only line there, `OQP_START_PAGE`, just
+  picks the initial page for screenshot runs and is inert when the variable is unset) —
+  this is what pins the app to the panel's output, fully covers Omarchy's own bar on
+  that output, and connects the daemon/knob/touch signal chain. A styling task should not need to touch this file at all beyond passing a
   new `theme` property down to a new component, if one is added.
 
 ## Verifying a restyle

@@ -1,32 +1,32 @@
 import QtQuick
+import "../Ui"
 
-// Page 3 — pomodoro + water + stand, combined into a single 1/3-width block (all three
-// functions stacked top-to-bottom inside one card, rather than three separate cards).
-// Touch buttons are provided alongside the knob gestures (press = start/pause pomodoro on
-// this page, hold = open the water-amount picker from any page). Buttons register with
-// TouchRouter, not just TapHandler — see TouchRouter.qml for why plain TapHandler alone
-// doesn't receive real touch input here.
+// Page 2 — pomodoro + water + stand, one combined block (a single card, the way Omarchy's
+// multi-section popups stack several labeled sections inside one PopupCard). On this 4:1
+// panel the three sections sit side by side, split by vertical separators, instead of
+// stacked — same block, full width.
 //
-// Styled to match Omarchy's own shell chrome (see Services/Theme.qml's header comment):
-// sharp corners, a card surface that's the page background plus a border rather than a
-// lightened fill, controls built from subtle low-alpha fills rather than solid color
-// blocks, and bold darkened-foreground section labels (no letter-spacing — not present in
-// the verified Ui/PanelSectionHeader.qml source) with a thin separator beneath — the same
-// hero-label-then-separator texture as Omarchy's own plugin panels (e.g. the bluetooth
-// panel's "CONNECTED" header + PanelSeparator, which also stacks multiple labeled sections
-// inside one card).
+// Touch buttons are provided alongside the knob gestures (press = start/pause pomodoro on
+// this page, hold = open the water-amount picker from any page). Ui/PanelButton registers
+// itself with TouchRouter — see TouchRouter.qml for why plain TapHandler alone doesn't
+// receive real touch input here.
 // Work/break use theme.red/theme.green as a semantic (not decorative) signal.
-Rectangle {
+Item {
     id: root
     required property var personalCareState
     required property var touchRouter
     required property var theme
-    color: root.theme.background
 
     property real _now: Date.now()
     Timer { interval: 500; running: true; repeat: true; onTriggered: root._now = Date.now() }
 
+    readonly property bool working: root.personalCareState.pomodoroPhase === "work"
     readonly property real pomodoroRemainingMs: Math.max(0, root.personalCareState.pomodoroPhaseEndsAt - root._now)
+
+    // Surfaces in the page header's status caption (Ui/PageHost.qml).
+    readonly property string heroMeta: root.personalCareState.pomodoroRunning
+        ? (root.working ? "Work" : "Break") + " · " + root.fmtTime(root.pomodoroRemainingMs) + " left"
+        : "Pomodoro paused"
 
     function fmtTime(ms) {
         var s = Math.floor(ms / 1000)
@@ -34,112 +34,135 @@ Rectangle {
         var ss = s % 60
         return m + ":" + (ss < 10 ? "0" : "") + ss
     }
-    function fmtAgo(ts) {
+    // "3h 15m" — the elapsed time alone; callers add "ago"/"since ..." context.
+    function fmtElapsed(ts) {
         if (!ts) return "never"
         var mins = Math.floor((root._now - ts) / 60000)
         if (mins < 1) return "just now"
-        if (mins < 60) return mins + "m ago"
-        return Math.floor(mins / 60) + "h " + (mins % 60) + "m ago"
+        if (mins < 60) return mins + "m"
+        return Math.floor(mins / 60) + "h " + (mins % 60) + "m"
+    }
+    function fmtAgo(ts) {
+        var e = root.fmtElapsed(ts)
+        return (e === "never" || e === "just now") ? e : e + " ago"
     }
 
-    component Card: Rectangle {
-        color: root.theme.background
-        border.color: root.theme.controlBorderColor
-        border.width: root.theme.borderWidth
-        radius: root.theme.cornerRadius
-    }
-
-    // Matches Ui/PanelSectionHeader.qml exactly: darkened foreground, bold, caption
-    // size — no letter-spacing.
-    component SectionLabel: Text {
-        color: root.theme.secondaryForeground
-        font.pixelSize: 12
+    component HeroText: Text {
+        textFormat: Text.PlainText
+        color: root.theme.foreground
+        font.family: root.theme.font.family
+        font.pixelSize: root.theme.font.hero
         font.bold: true
     }
-
-    component SectionSeparator: Rectangle {
+    component DetailText: Text {
+        textFormat: Text.PlainText
+        color: root.theme.secondaryForeground
+        font.family: root.theme.font.family
+        font.pixelSize: root.theme.font.subtitle
         width: parent.width
-        height: 1
-        color: root.theme.separatorColor
+        elide: Text.ElideRight
     }
 
-    component PluginButton: Rectangle {
-        id: btn
-        property alias label: btnText.text
-        signal activated()
-        color: tapHandler.pressed ? root.theme.controlFillHover : root.theme.controlFill
-        border.color: root.theme.controlBorderColor
-        border.width: root.theme.borderWidth
-        radius: root.theme.cornerRadius
-        width: 160; height: 44
-        Text { id: btnText; anchors.centerIn: parent; color: root.theme.foreground; font.pixelSize: 14 }
-        TapHandler { id: tapHandler; onTapped: btn.activated() } // mouse; see TouchRouter.qml for touch
-    }
-
-    // Single block, 1/3 of the page width (same width one of the original three cards
-    // had) — full page height, all three functions stacked inside.
-    Card {
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.margins: 18
-        width: (parent.width - 36) / 3
+    // One section = a column of the card. Label + separator + hero content at the top,
+    // the action button pinned to the bottom so all three columns share a baseline.
+    component Section: Item {
+        id: section
+        property string icon: ""
+        property string label: ""
+        default property alias content: sectionBody.data
+        property alias button: buttonLoader.sourceComponent
+        height: parent.height
 
         Column {
-            anchors.fill: parent
-            anchors.margins: 16
-            spacing: 8
+            id: sectionBody
+            width: parent.width
+            spacing: root.theme.spacing.rowGap
+            SectionLabel { theme: root.theme; icon: section.icon; text: section.label }
+            SectionSeparator { theme: root.theme }
+        }
+        Loader {
+            id: buttonLoader
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+        }
+    }
 
-            // Card-level title (distinct from the section labels below) — mirrors
-            // Omarchy's own hero-title-then-sections popups (e.g. bluetooth's "Bluetooth"
-            // heading above its "CONNECTED" section label).
-            Text { text: "Self Care"; color: root.theme.foreground; font.pixelSize: 17; font.bold: true }
-            SectionSeparator {}
+    Card {
+        theme: root.theme
+        anchors.fill: parent
+
+        Row {
+            id: columns
+            anchors.fill: parent
+            anchors.margins: root.theme.space(16)
+            spacing: root.theme.space(24)
+            readonly property real columnWidth: (width - spacing * 4 - 2) / 3
 
             // ---- Pomodoro ----
-            SectionLabel { text: "POMODORO" }
-            SectionSeparator {}
-            Text {
-                text: (root.personalCareState.pomodoroPhase === "work" ? "Work" : "Break").toUpperCase()
-                color: root.personalCareState.pomodoroPhase === "work" ? root.theme.red : root.theme.green
-                font.pixelSize: 12; font.bold: true
+            Section {
+                icon: "󱎫"; label: "POMODORO"
+                width: columns.columnWidth
+
+                // Phase pill — PanelHero.qml's `detail` pill shape, colored semantically.
+                Rectangle {
+                    implicitWidth: phaseText.implicitWidth + root.theme.space(10)
+                    implicitHeight: phaseText.implicitHeight + root.theme.space(4)
+                    color: "transparent"
+                    border.color: root.theme.withAlpha(root.working ? root.theme.red : root.theme.green, 0.4)
+                    border.width: root.theme.borderWidth
+                    radius: root.theme.cornerRadius
+                    Text {
+                        id: phaseText
+                        anchors.centerIn: parent
+                        text: root.working ? "WORK" : "BREAK"
+                        textFormat: Text.PlainText
+                        color: root.working ? root.theme.red : root.theme.green
+                        font.family: root.theme.font.family
+                        font.pixelSize: root.theme.font.caption
+                        font.bold: true
+                        font.letterSpacing: root.theme.font.heroCaptionSpacing
+                    }
+                }
+                HeroText { text: root.personalCareState.pomodoroRunning ? root.fmtTime(root.pomodoroRemainingMs) : "Paused" }
+                DetailText { text: "Completed today: " + root.personalCareState.todayPomodoroCount }
+
+                button: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: root.personalCareState.pomodoroRunning ? "󰏤" : "󰐊"
+                    text: root.personalCareState.pomodoroRunning ? "Pause" : "Start"
+                    onActivated: root.personalCareState.togglePomodoro()
+                }
             }
-            Text {
-                text: root.personalCareState.pomodoroRunning ? root.fmtTime(root.pomodoroRemainingMs) : "Paused"
-                color: root.theme.foreground; font.pixelSize: 26; font.bold: true
-            }
-            Text { text: "Completed today: " + root.personalCareState.todayPomodoroCount; color: root.theme.secondaryForeground; font.pixelSize: 13 }
-            PluginButton {
-                id: pomodoroButton
-                label: root.personalCareState.pomodoroRunning ? "Pause" : "Start"
-                onActivated: root.personalCareState.togglePomodoro()
-                Component.onCompleted: root.touchRouter.registerTap(pomodoroButton, function () { root.personalCareState.togglePomodoro() })
-                Component.onDestruction: root.touchRouter.unregisterTap(pomodoroButton)
-            }
+
+            SectionSeparator { theme: root.theme; vertical: true }
 
             // ---- Water ----
-            SectionLabel { text: "WATER" }
-            SectionSeparator {}
-            Text {
-                text: (root.personalCareState.todayWaterMl / 1000).toFixed(2) + " L today"
-                color: root.theme.foreground; font.pixelSize: 20; font.bold: true
-            }
-            Text { text: root.personalCareState.todayWaterCount + " logged · last: " + root.fmtAgo(root.personalCareState.lastDrinkAt); color: root.theme.secondaryForeground; font.pixelSize: 13 }
-            PluginButton {
-                id: waterButton
-                label: "Log water"
-                onActivated: root.personalCareState.requestWaterAmount()
-                Component.onCompleted: root.touchRouter.registerTap(waterButton, function () { root.personalCareState.requestWaterAmount() })
-                Component.onDestruction: root.touchRouter.unregisterTap(waterButton)
+            Section {
+                icon: "󰖌"; label: "WATER"
+                width: columns.columnWidth
+
+                HeroText { text: (root.personalCareState.todayWaterMl / 1000).toFixed(2) + " L" }
+                DetailText { text: "today · " + root.personalCareState.todayWaterCount + " logged · last " + root.fmtAgo(root.personalCareState.lastDrinkAt) }
+
+                button: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: "󰅶"
+                    text: "Log water"
+                    onActivated: root.personalCareState.requestWaterAmount()
+                }
             }
 
+            SectionSeparator { theme: root.theme; vertical: true }
+
             // ---- Stand ----
-            SectionLabel { text: "STAND" }
-            SectionSeparator {}
-            Text { text: root.fmtAgo(root.personalCareState.lastStandAt); color: root.theme.foreground; font.pixelSize: 18; font.bold: true }
-            Text {
-                text: "Reminds every " + Math.round(root.personalCareState.standIntervalMs / 60000) + " min"
-                color: root.theme.secondaryForeground; font.pixelSize: 13
+            Section {
+                icon: "󰖃"; label: "STAND"
+                width: columns.columnWidth
+
+                HeroText { text: root.fmtElapsed(root.personalCareState.lastStandAt) }
+                DetailText { text: "since last stand · reminds every " + Math.round(root.personalCareState.standIntervalMs / 60000) + " min" }
             }
         }
     }
