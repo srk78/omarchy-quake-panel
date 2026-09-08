@@ -1,0 +1,25 @@
+-- Omarchy Quake Panel — reference copy of the touch-device binding already applied to
+-- this machine's ~/.config/hypr/input.lua. Requires daemon/src/uinputTouch.js to be
+-- running (creates the virtual device this binds to) — see ops/hyprland/monitors.example.lua
+-- for the separate monitor-placement config.
+--
+-- Bound by device NAME (not the global input.touchdevice.output) so this does not also
+-- rebind any other real touchscreen on the system (e.g. a laptop's own digitizer).
+-- Confirmed live: name-binding is REQUIRED — without it, touches landed on the primary/
+-- laptop screen instead of the panel (selecting text there instead of interacting with
+-- the panel's own content).
+--
+-- transform = 0 here, NOT matching the monitor's own transform (3, in monitors.example.lua):
+-- the virtual touch device already emits coordinates pre-rotated to match the FINAL
+-- landscape view (uinputTouch.js does its own bottom-left-to-top-left Y-flip) — it has no
+-- "physical sensor orientation" to correct for the way a real rotated touchscreen would, so
+-- applying the monitor's own transform again here double-rotates it and touch stops
+-- working entirely (confirmed live: transform = 3 here produced no usable interaction at
+-- all; transform = 0 works correctly).
+--
+-- NOTE: `hyprctl devices` appends a "-N" disambiguation suffix to the device's raw name
+-- when more than one has registered under it in the current session (this drifts across
+-- ungracefully-killed daemon restarts during development) — always check the CURRENT exact
+-- name shown by `hyprctl devices` after restarting the daemon; this binding silently stops
+-- matching if the name has drifted.
+hl.device({ name = "omarchy-quake-panel-touch", output = "desc:BOE DK-QUAKE", transform = 0 })

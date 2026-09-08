@@ -1,0 +1,15 @@
+{
+  "homeAssistant": {
+    "url": "http://homeassistant.local:8123/lovelace/default_view",
+    "token": ""
+  },
+  "personalCare": {
+    "waterReminderThresholdMinutes": 50,
+    "standReminderIntervalMinutes": 50,
+    "pomodoroWorkMinutes": 25,
+    "pomodoroBreakMinutes": 5
+  },
+  "panel": {
+    "outputDescription": "desc:BOE DK-QUAKE"
+  }
+}

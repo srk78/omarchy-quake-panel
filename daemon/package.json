@@ -1,0 +1,22 @@
+{
+  "name": "omarchy-quake-panel-daemon",
+  "version": "0.1.0",
+  "description": "HID bridge for the DK-QUAKE / ARIS-68 panel — prints decoded touch/knob/state events as JSON lines, accepts JSON commands on stdin.",
+  "license": "SEE LICENSE (MIT + PolyForm Noncommercial split, see ../NOTICE)",
+  "private": true,
+  "type": "commonjs",
+  "bin": {
+    "omarchy-quake-panel-daemon": "src/bridge.js"
+  },
+  "scripts": {
+    "start": "node src/bridge.js"
+  },
+  "dependencies": {
+    "koffi": "^3.2.1",
+    "node-hid": "^3.3.0"
+  },
+  "allowScripts": {
+    "node-hid@3.4.0": true,
+    "koffi@3.2.1": true
+  }
+}

@@ -1,0 +1,26 @@
+# DK-QUAKE / ARIS-68 panel — grant the `input` group rw access to the device's HID
+# interfaces and to /dev/uinput.
+#
+# Install: sudo cp 99-omarchy-quake-panel.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+# Then unplug/replug the panel's USB cable (or `sudo udevadm trigger --action=add`).
+# You must be in the `input` group for this to take effect: `sudo usermod -aG input "$USER"`,
+# then fully log out and back in (group membership is read at login, not by udevadm/replug).
+#
+# NOTE: this uses GROUP+MODE rather than TAG+="uaccess" — on this system the uaccess/logind
+# seat-ACL mechanism did not actually grant access (tag applied per `udevadm info`, but no ACL
+# ever appeared via `getfacl`), so we use the older, more predictable group-based mechanism
+# instead, matching how /dev/uinput below is already handled.
+#
+# /dev/uinput is used by daemon/src/uinputTouch.js to synthesize a real kernel touch
+# device from the panel's vendor-specific (non-standard) touch HID reports — see
+# docs/DEVICE_PROTOCOL.md and the repo-level plan for why this is necessary.
+
+# Control interface: QUAKE (single-iface variant) and ARIS-68 (composite variant)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="4158", ATTRS{idProduct}=="514b", GROUP="input", MODE="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="5012", ATTRS{idProduct}=="6817", GROUP="input", MODE="0660"
+
+# Touch interface (hotlotus)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0712", ATTRS{idProduct}=="0010", GROUP="input", MODE="0660"
+
+# Virtual touchscreen the daemon creates
+KERNEL=="uinput", GROUP="input", MODE="0660"

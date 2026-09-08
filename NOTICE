@@ -1,0 +1,49 @@
+Omarchy Quake Panel — licensing notice
+======================================
+
+This repository is split-licensed.
+
+MIT (see ./LICENSE)
+-------------------
+All original work in this repository, including:
+  - shell/          the Quickshell/QML kiosk UI: pages, knob routing, personal-care
+                    state, system stats, Home Assistant page
+  - daemon/src/bridge.js   the daemon's CLI/IPC orchestration (stdout events, stdin
+                    commands) — it does not itself encode any device protocol
+  - ops/, config/   udev rules, Hyprland config examples, systemd units, config templates
+  - everything not listed under PolyForm below
+
+PolyForm Noncommercial 1.0.0 (see ./daemon/LICENSE)
+----------------------------------------------------
+Everything that embeds or derives from the reverse-engineered DK-QUAKE / ARIS-68
+device communication protocol:
+  - daemon/src/Aris68Connector.js   the HID driver — ported from
+                    github.com/TeeJS/bedrock-panel's src/Aris68Connector.js
+  - daemon/src/uinputTouch.js       the virtual-touchscreen bridge — encodes the
+                    same touch report coordinate system/orientation facts
+                    (bottom-left origin, 1920x480, down/up semantics) recovered
+                    as part of that protocol
+
+Why the split
+-------------
+The DK-QUAKE / ARIS-68 protocol (HID interface IDs, frame format, opcodes,
+checksum, and the touch/knob/RGB-ring semantics) was reverse-engineered from
+DK-Suite V0.4.35 by the Bedrock Panel project (github.com/TeeJS/bedrock-panel),
+which released it under PolyForm Noncommercial 1.0.0 at the vendor's request
+(the vendor described the protocol as restricted for commercial use, with
+non-commercial use permitted). This repository ports that driver to run under
+Linux/Quickshell rather than Electron/Windows; the ported files carry the same
+license and the same "Required Notice" the original requires you to preserve
+(see `daemon/LICENSE`). This may be relaxed to a permissive license if
+explicit written commercial permission is obtained from the protocol holders.
+
+Everything else in this repository — the Quickshell UI, the daemon's own
+process/IPC plumbing, and all ops/config scaffolding — is wholly original work
+built for this project and is MIT-licensed.
+
+What is NOT in this repository
+-------------------------------
+No vendor source code, binaries, or API keys are included.
+
+Required Notice: Copyright 2026 TeeJS (original protocol reverse-engineering)
+Required Notice: Copyright 2026 Stefan Kalter (this port)
