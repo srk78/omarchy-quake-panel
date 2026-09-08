@@ -7,8 +7,8 @@ Sibling project to [Bedrock Panel](https://github.com/TeeJS/bedrock-panel), whic
 the same hardware on Windows via Electron. This repo is a from-scratch Linux-native build,
 not a port of that app — it reuses only the reverse-engineered HID protocol driver.
 
-**Status: real kiosk shell running on hardware, 2 of 3 pages.** See `PLAN.md` (mirrors the
-design doc this repo was built from) for the full architecture and build order. Confirmed
+**Status: real kiosk shell running on hardware, 2 of 3 pages.** See `HISTORY.md` for the
+architecture, build order, and hard-won fixes, and `NEXT_STEPS.md` for pending work. Confirmed
 working end-to-end: the HID bridge daemon (`daemon/`), a virtual `/dev/uinput` touchscreen,
 and the Quickshell kiosk shell (`shell/shell.qml`) with a knob-driven `KnobRouter`, a
 system dashboard page, and a personal-care page — pomodoro (with correct pause/resume),

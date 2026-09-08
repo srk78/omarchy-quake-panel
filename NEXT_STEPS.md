@@ -3,16 +3,6 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
-## Housekeeping (do these first)
-
-- **Nothing is committed to git yet.** The repo has an empty `master` branch and every
-  top-level entry is untracked. Make an initial commit before anything else — check
-  `daemon/node_modules/` is excluded (`.gitignore` should already cover it, but verify)
-  before `git add`.
-- **`README.md` references a `PLAN.md`** ("See `PLAN.md`... for the full architecture and
-  build order") that does not exist anywhere in the repo. Either write it or remove the
-  reference — right now it's a dead link for anyone reading the README fresh.
-
 ## Styling (in progress, mostly done)
 
 - The `omarchy-design` skill's corrections were applied to `DashboardPage.qml` and
@@ -52,10 +42,9 @@ file first for context on *why* each of these is in the state it's in.
 
 ## Suggested order if resuming cold
 
-1. Commit what exists (housekeeping item above) so nothing is at risk.
-2. Physically re-verify touch on the two Personal Care buttons post-restyle (quick, high
+1. Physically re-verify touch on the two Personal Care buttons post-restyle (quick, high
    confidence check).
-3. Pick one of: config.json wiring, systemd units, or the Home Assistant
+2. Pick one of: config.json wiring, systemd units, or the Home Assistant
    external-window approach — whichever the user most wants next — rather than
    continuing incremental styling polish, since the three built pages/features are
    functionally complete and visually consistent as of this write-up.
