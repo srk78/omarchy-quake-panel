@@ -7,25 +7,31 @@ Sibling project to [Bedrock Panel](https://github.com/TeeJS/bedrock-panel), whic
 the same hardware on Windows via Electron. This repo is a from-scratch Linux-native build,
 not a port of that app — it reuses only the reverse-engineered HID protocol driver.
 
-**Status: real kiosk shell running on hardware, 2 of 3 pages.** See `HISTORY.md` for the
-full build history and hard-won fixes, and `NEXT_STEPS.md` for pending work. Confirmed
-working end-to-end: the HID bridge daemon, a virtual `/dev/uinput` touchscreen, and the
-Quickshell kiosk shell with a knob-driven page switcher, a system dashboard, and a
-personal-care page (pomodoro, water in ml, stand reminders) — all styled to match
-Omarchy's own design system and persisted to disk. **The Home Assistant page is on
-hold** — embedding a `WebEngineView` inside Quickshell crashes hard (see
-`shell/Pages/HomeAssistantPage.qml`'s header comment); it needs a different approach (an
-external kiosk browser window this shell yields to) before it can come back. Not yet
-built: reading `config/config.example.json` into the running app (thresholds are
-currently hardcoded in `PersonalCareState.qml`) and systemd autostart units.
+**Status: a real Omarchy shell plugin, toggleable between kiosk and second-screen
+mode.** See `HISTORY.md` for the full build history and hard-won fixes, and
+`NEXT_STEPS.md` for pending work. Confirmed working end-to-end, live-tested inside the
+real `omarchy-shell` process: the HID bridge daemon, a virtual `/dev/uinput`
+touchscreen, a knob-driven Dashboard/Self Care kiosk, and a mode toggle (knob long-hold,
+an IPC call, a menu entry, a keybind) that switches the panel's whole output between
+that kiosk and an ordinary second screen Hyprland can place windows on — flipping back
+reveals Omarchy's own bar and wallpaper, already running underneath, with no extra code.
+**The Home Assistant page is on hold** — embedding a `WebEngineView` inside Quickshell
+crashes hard (see `shell/Pages/HomeAssistantPage.qml`'s header comment); it needs a
+different approach (an external kiosk browser window this shell yields to) before it can
+come back. Not yet built: reading `config/config.example.json` into the running app
+(thresholds are currently hardcoded in `PersonalCareState.qml`), systemd autostart for
+the plugin's one-time setup, and migrating the styling layer onto Omarchy's own
+`qs.Commons`/`qs.Ui` now that the plugin conversion makes them genuinely reachable (see
+`NEXT_STEPS.md`).
 
 ## Repo layout
 
 | Path | What it is |
 |---|---|
+| `manifest.json` | The Omarchy shell plugin declaration — what `omarchy plugin add` reads |
 | `daemon/` | Node.js process that talks to the panel over USB HID and exposes it as JSON-lines-over-stdio |
-| `shell/` | Quickshell/QML kiosk UI — the layer-shell window, pages, services, and shared UI components |
-| `ops/` | udev rules, `modules-load.d` config, and validated Hyprland config examples from the real build machine |
+| `shell/` | Quickshell/QML kiosk UI — pages, services, shared UI components, and two entry points (`Service.qml` for real use, `shell.qml` for standalone dev) |
+| `ops/` | udev rules, `modules-load.d` config, validated Hyprland config examples, and the mode-toggle's menu/keybind samples and CLI wrapper |
 | `config/` | `config.example.json` — the shape a future config-file loader will read (not wired up yet, see above) |
 | `.claude/skills/omarchy-design/` | a project-scoped Claude Code skill that verifies Omarchy's real design tokens from installed source before any styling change |
 | `HISTORY.md` | development log — why each odd architectural choice exists, in the order it was made |
@@ -78,8 +84,21 @@ for Linux/`uinput` instead of Windows/Electron.
 
 ### `shell/` — the Quickshell kiosk UI
 
-A single fullscreen Wayland layer-shell window (`shell/shell.qml`) pinned to the panel's
-output, built from:
+Two entry points share everything below them:
+
+- **`shell/Service.qml`** — the real Omarchy shell plugin entry point (declared in
+  `manifest.json`, `kinds: ["service"]`). Loaded once, at startup, **inside** the single
+  long-running `omarchy-shell` process — this is what `omarchy plugin add/enable` runs.
+  It owns a persisted `mode` flag (`"kiosk"` or `"desktop"`) and only mounts the kiosk
+  window while `mode === "kiosk"`; see "Kiosk vs. second screen" below.
+- **`shell/shell.qml`** — a standalone dev/screenshot entry point
+  (`quickshell -p shell/shell.qml`), kept around because iterating on styling by
+  reloading the whole `omarchy-shell` process is much slower than a throwaway process
+  `.claude/skills/omarchy-design/scripts/capture-panel.sh` can restart freely. It always
+  runs the kiosk, with no mode toggle.
+
+Both wire the same fullscreen Wayland layer-shell window pinned to the panel's output,
+built from:
 
 - **`Services/HidBridge.qml`** — spawns the daemon as a `Process` and parses its
   JSON-lines stdout into Qt signals.
@@ -115,11 +134,80 @@ output, built from:
   knob wiring at all so it can never steal a gesture), and `WaterAmountPicker` (the
   knob/touch-drivable "how much water?" popup).
 
-Run it directly for development:
+Run the standalone dev entry point directly:
 
 ```sh
 quickshell -p shell/shell.qml
 ```
+
+### Kiosk vs. second screen — the mode toggle
+
+`shell/Service.qml` mounts its `PanelWindow` (Overlay layer, ignored exclusion zone —
+same trick as always, to beat Omarchy's own bar) only while its persisted `mode` is
+`"kiosk"`. Flip it to `"desktop"` and that window simply isn't there — Omarchy's own bar
+and wallpaper, already rendering on every connected output including this one
+underneath the kiosk (confirmed live: stopping the kiosk process reveals them
+immediately, with the output's normal workspace and reserved bar zone intact), take
+over with no extra code. The daemon connection (knob, touch, the `/dev/uinput` device)
+keeps running in both modes, which is what lets the knob toggle back into kiosk mode
+with no window present to read it from.
+
+Five equivalent ways to flip it, all calling the same `IpcHandler` on the plugin
+(`target: "quake-panel"` in `shell/Service.qml`):
+
+- **Hold the knob for ~3 seconds** — distinct from the existing short hold (opens the
+  water picker); works with no keyboard, mouse, or menu.
+- **A top-bar dropdown** (`shell/BarWidget.qml`, the plugin's `bar-widget` half) — click
+  its icon (a small device glyph in kiosk mode, a monitor glyph in desktop mode) on any
+  ordinary screen's Omarchy bar to pick Kiosk or Second screen from a two-row popup.
+  Reads/writes `Service.qml`'s `mode` through `bar.shell.serviceFor("srk78.quake-panel")`
+  — the same generic same-plugin service lookup `omarchy.media`'s own service+bar-widget
+  split uses — rather than a second IPC surface.
+- `omarchy-shell quake-panel toggleMode` (or `status` / `setMode kiosk|desktop`) — the
+  raw IPC call.
+- `ops/bin/omarchy-quake-panel-toggle` (add `--status` to only query) — a thin CLI
+  wrapper around the same call.
+- A menu entry (`ops/omarchy-menu.example.jsonc`, merge into your own
+  `~/.config/omarchy/extensions/omarchy-menu.jsonc`) or a Hyprland keybind
+  (`ops/hyprland/keybind.example.lua`) — both just run the same IPC call.
+
+### Installing as an Omarchy plugin
+
+```sh
+omarchy plugin add https://github.com/srk78/omarchy-quake-panel.git --enable
+```
+
+This clones the repo into `~/.config/omarchy/plugins/srk78.quake-panel/` and enables it
+(plugins otherwise land disabled, so you can review the code first). `daemon/`'s
+dependencies aren't installed automatically — Omarchy's plugin installer deliberately
+never runs plugin code or install hooks — so run `npm install` inside that checkout's
+`daemon/` once yourself (see udev/`uinput` setup below too). `omarchy plugin list` should
+then show `srk78.quake-panel` as an enabled, third-party `service,bar-widget` plugin;
+`omarchy plugin update` fast-forwards it later.
+
+The manifest declares two kinds (`service`, always-loaded; `bar-widget`, the top-bar
+dropdown above) from one plugin id. `--enable` only enables the service half — a
+plugin's `enabled` status for a bar-widget kind specifically means "placed in the bar
+layout," a separate thing from the service running. Add the dropdown to a bar section
+with:
+
+```sh
+omarchy plugin enable srk78.quake-panel --section right
+```
+
+(Confirmed live: doing this while the plugin already had a bare `{"id": ...}` entry in
+`shell.json`'s top-level `plugins[]` — from an earlier `service`-only install — silently
+no-ops, because `setEnabled()` treats any existing entry as "already placed" without
+checking *which* placement it is. If the dropdown doesn't appear after the command
+above reports success, check whether `plugins[]` still holds a bare entry for this id
+and remove it, then re-run the command.)
+
+For local development, the same effect without a git round-trip: copy or clone this repo
+into `~/.config/omarchy/plugins/<any-id>/` by hand, `omarchy-shell shell rescanPlugins`,
+then `omarchy plugin enable <id>` — see
+`/usr/share/omarchy/shell/README.md`'s "Installing by hand" section for the full
+mechanism (a symlinked plugin folder is rejected by `omarchy plugin validate`, so use a
+real copy or a git clone).
 
 ### Two touch paths — and why our own UI uses the unusual one
 

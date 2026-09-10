@@ -3,7 +3,7 @@ import QtQuick
 // Per-page knob mode table — the QML analog of Bedrock Panel's `effectiveKnob`/
 // `knobRouting.js`: raw hardware gestures come in verbatim, and this resolves what they
 // mean on the currently active page. Global gestures (rotate = switch page, hold = log
-// water from any page) live here directly since there are only 2 pages right now; `press`
+// water from any page) live here directly since there are only a few pages; `press`
 // is the one gesture that varies per page.
 //
 // ToastOverlay deliberately has NO wiring into this router at all — reminders can never
@@ -17,14 +17,15 @@ QtObject {
     // QtWebEngineQuick::initialize() called before QGuiApplication is constructed, which
     // Quickshell's own binary doesn't do). See Pages/HomeAssistantPage.qml and the repo
     // README for the plan to revisit this (external kiosk browser window instead).
-    property int currentPageIndex: 0 // 0=Dashboard, 1=PersonalCare
-    readonly property int pageCount: 2
+    property int currentPageIndex: 0 // 0=System, 1=PersonalCare, 2=Settings
+    readonly property int pageCount: 3
     required property var personalCareState
     required property var waterAmountPicker
 
     readonly property var modeTable: [
-        { press: "noop" },           // 0: Dashboard
+        { press: "noop" },           // 0: System
         { press: "pomodoroToggle" }, // 1: Personal Care
+        { press: "noop" },           // 2: Settings
     ]
 
     function dispatch(event) {
@@ -45,7 +46,7 @@ QtObject {
         } else if (event.type === "press") {
             var action = root.modeTable[root.currentPageIndex].press
             if (action === "pomodoroToggle") personalCareState.togglePomodoro()
-            // "noop" on pages 0/1 intentionally does nothing in v1
+            // "noop" on System/Settings intentionally does nothing in v1
         }
     }
 }

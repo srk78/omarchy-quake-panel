@@ -1,0 +1,15 @@
+// Omarchy Quake Panel — sample entry for the toggle, to merge into your own
+// ~/.config/omarchy/extensions/omarchy-menu.jsonc (documented in
+// /usr/share/omarchy/shell/README.md — the user-writable menu extension point; no core
+// Omarchy changes needed). Copy the object below into that file's top-level object.
+//
+// Calls the plugin's own IPC target directly (see shell/Service.qml's IpcHandler) —
+// equivalent to running ops/bin/omarchy-quake-panel-toggle.
+{
+  "quake-panel.toggle-screen-mode": {
+    "icon": "󰍺",
+    "label": "Quake Panel: Toggle Screen Mode",
+    "description": "Switch the DK-QUAKE panel between the kiosk (Dashboard/Self Care) and an ordinary second screen",
+    "action": "omarchy-shell -q quake-panel toggleMode"
+  }
+}

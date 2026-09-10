@@ -1,24 +1,30 @@
-# Applying Omarchy conventions to this standalone app
+# Applying Omarchy conventions to this app
 
-This app (`omarchy-quake-panel`) is **not** a plugin running inside Omarchy's own
-`omarchy-shell` process — it's launched separately as `quickshell -p shell/shell.qml`
-(see repo `README.md`). That has one concrete, verified consequence:
+**As of this project's plugin conversion, `import qs.Commons` / `import qs.Ui` ARE
+genuinely available — but only for code loaded through `shell/Service.qml`, the real
+Omarchy shell plugin entry point** (`manifest.json`'s `entryPoints.service`), confirmed
+live: it was hand-installed into `~/.config/omarchy/plugins/<id>/`, enabled via
+`omarchy plugin enable`, and rendered correctly inside the actual `omarchy-shell`
+process. Those module names are synthesized by whichever process actually ran
+`quickshell -p <dir>`, from *that* process's own directory tree — so the older
+constraint below still applies in full to `shell/shell.qml`, the separate **standalone
+dev entry point** kept around for the fast `capture-panel.sh` screenshot-iteration loop:
+run that way, this app is its own process, not a plugin inside `omarchy-shell`, and
+`qs.Commons`/`qs.Ui` are not resolvable there (confirmed repeatedly across this
+project's build, before the plugin conversion existed at all).
 
-**`import qs.Commons` / `import qs.Ui` are not available here.** Those module names are
-synthesized by Omarchy's own shell process at startup from its own directory tree
-(`Quickshell.shellDir`-relative), specific to *that* running instance. This project has
-never successfully imported them (confirmed across this project's entire build so far —
-every styling primitive was hand-rolled in `shell/Services/Theme.qml` for exactly this
-reason). Don't attempt `import qs.Commons` and don't assume a future Quickshell version
-changes this — verify fresh if revisiting.
-
-**What this means practically:** port the *default values and idioms* documented in
-`reference/omarchy-conventions.md`, not the component names or import paths. Where this
-project needs the equivalent of `Color`, build it into `Theme.qml`; where it needs
-`BorderSurface`/`CursorSurface`, build a small local component in the page that needs it
-(or promote to a shared `Ui/` component if more than one page needs the same shape — see
-the `shell/Ui/` table below for what already exists; page-local shapes still use QML's
-`component Name: ... { }` syntax).
+**Practical consequence for a styling task**: check which entry point the code you're
+touching actually loads through. `Pages/*.qml` and most of `Ui/*.qml`/`Services/*.qml`
+are shared between both entry points (imported by both `shell.qml` and `Service.qml`),
+so they still can't assume `qs.Commons` is available — `Services/Theme.qml`'s hand-rolled
+tokens remain the actual styling source for all of them today, and have **not yet been
+migrated** to real `qs.Commons`/`qs.Ui` even though the plugin entry point could now
+support it (a follow-up noted in `NEXT_STEPS.md`, deliberately not done in the same pass
+as the plugin conversion itself, since a styling swap needs its own screenshot-verified
+pass). Until that migration happens, keep porting *default values and idioms* documented
+in `reference/omarchy-conventions.md` into `Theme.qml`/`Ui/*`, exactly as before — don't
+add a stray `import qs.Commons` to a page or shared component on the assumption it'll
+work, since those files are loaded by the standalone path too.
 
 ## Current state of this project's styling layer
 
@@ -90,7 +96,11 @@ see project memory `project_omarchy_quake_panel.md` for the debugging history):
   `Component.onCompleted` wiring — the one dev-only line there, `OQP_START_PAGE`, just
   picks the initial page for screenshot runs and is inert when the variable is unset) —
   this is what pins the app to the panel's output, fully covers Omarchy's own bar on
-  that output, and connects the daemon/knob/touch signal chain. A styling task should not need to touch this file at all beyond passing a
+  that output, and connects the daemon/knob/touch signal chain. **`shell/Service.qml`**
+  is the production counterpart (the real Omarchy plugin entry point) and mirrors the
+  same window setup inside its kiosk-mode `Loader` — keep both in sync if this setup
+  ever needs to change, and don't touch either's mode-toggle logic (`mode`,
+  `IpcHandler`, the knob long-hold timer) as part of a styling task. A styling task should not need to touch this file at all beyond passing a
   new `theme` property down to a new component, if one is added.
 
 ## Verifying a restyle

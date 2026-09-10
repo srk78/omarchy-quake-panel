@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "srk78.quake-panel",
+  "name": "Quake Panel",
+  "version": "0.1.0",
+  "author": "Stefan Kalter",
+  "license": "SEE LICENSE (MIT + PolyForm Noncommercial split, see NOTICE)",
+  "description": "Drives a DK-QUAKE / ARIS-68 touchscreen-plus-knob panel: a Dashboard/Self Care kiosk on its own output, toggleable to an ordinary second screen.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "shell/Service.qml",
+    "barWidget": "shell/BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Quake Panel",
+    "description": "Toggle the panel between Kiosk and Second screen mode",
+    "category": "Compositor",
+    "allowMultiple": false
+  }
+}

@@ -70,6 +70,18 @@ const COMMANDS = {
   setLedColor: c => dev.setLedColor(c.hue, c.sat),
   saveLighting: () => dev.saveLighting(),
   getLighting: async () => out({ t: 'state', state: { lighting: await dev.getLighting() } }),
+  // Create/destroy the virtual /dev/uinput touchscreen on demand — see uinputTouch.js's
+  // own start()/stop() (already idempotent) and feed()'s own `if (this.fd === null)
+  // return` guard, which makes toggling this safe even mid-touch. Exists so the real
+  // Omarchy plugin (shell/Service.qml) can keep it OFF while in kiosk mode, where this
+  // app's own TouchRouter already handles every touch directly from this same JSON
+  // stream and never needed the virtual device at all — see its own header comment in
+  // shell/Services/TouchRouter.qml for why. Only "desktop" mode (an ordinary window
+  // actually visible on the panel's output) needs a real OS-level touch device.
+  setVirtualTouch: c => {
+    if (c.on) { uinputTouch.start(); out({ t: 'state', state: { uinput: true } }); }
+    else { uinputTouch.stop(); out({ t: 'state', state: { uinput: false } }); }
+  },
 };
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });

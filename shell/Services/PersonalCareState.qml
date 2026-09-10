@@ -144,6 +144,15 @@ QtObject {
         onTriggered: { root.lastStandAt = Date.now(); root.reminder("Time to stand up and stretch") }
     }
 
+    // Manual "I just stood up" reset (the Stand panel's Reset button) — marks now as the
+    // last stand and restarts the countdown, same as a real stand would, without waiting
+    // for the timer to fire on its own.
+    function resetStand() {
+        root.lastStandAt = Date.now()
+        standReminderTimer.restart()
+        root._persist()
+    }
+
     // ---- pomodoro ----
     property Timer pomodoroTimer: Timer {
         repeat: false
@@ -151,8 +160,12 @@ QtObject {
     }
     // Remaining time left in the current phase when paused — resuming continues from here
     // instead of restarting the full phase. Left at 0 after a phase completes naturally
-    // (see _onPhaseEnd -> _startPomodoro), so that path still gets a fresh full duration.
-    property real _pausedRemainingMs: 0
+    // (see _onPhaseEnd -> _startPomodoro) or after a manual reset, so those paths get a
+    // fresh full duration instead of resuming a stale one. Not underscore-prefixed
+    // (unlike this file's other internal state) because PersonalCarePage.qml reads it
+    // directly to tell "genuinely paused mid-session" apart from "fresh/just reset" —
+    // both show pomodoroRunning === false, and only this distinguishes them.
+    property real pausedRemainingMs: 0
 
     function togglePomodoro() {
         if (root.pomodoroRunning) root._pausePomodoro()
@@ -171,8 +184,8 @@ QtObject {
             waterReminderTimer.start()
         }
         root.pomodoroRunning = true
-        var dur = root._pausedRemainingMs > 0 ? root._pausedRemainingMs : (root.pomodoroPhase === "work" ? root.pomodoroWorkMs : root.pomodoroBreakMs)
-        root._pausedRemainingMs = 0
+        var dur = root.pausedRemainingMs > 0 ? root.pausedRemainingMs : (root.pomodoroPhase === "work" ? root.pomodoroWorkMs : root.pomodoroBreakMs)
+        root.pausedRemainingMs = 0
         root.pomodoroPhaseEndsAt = now + dur
         pomodoroTimer.stop()
         pomodoroTimer.interval = dur
@@ -182,9 +195,26 @@ QtObject {
 
     function _pausePomodoro() {
         root.pomodoroRunning = false
-        root._pausedRemainingMs = Math.max(0, root.pomodoroPhaseEndsAt - Date.now())
+        root.pausedRemainingMs = Math.max(0, root.pomodoroPhaseEndsAt - Date.now())
         pomodoroTimer.stop()
         waterReminderTimer.stop() // scoped to the running session that scheduled it — see PLAN.md
+        root._persist()
+    }
+
+    // Manual reset (the Pomodoro panel's Reset button): stop and clear the current
+    // session back to a fresh "work" phase at its full duration — NOT running, and
+    // pausedRemainingMs left at 0 (not the frozen remaining time) so
+    // PersonalCarePage.qml shows the full 25:00 rather than "Paused": a reset phase is
+    // fresh, not mid-session-paused, even though pomodoroRunning is false either way.
+    // Leaves todayPomodoroCount alone — this abandons the in-progress cycle, it doesn't
+    // erase today's completed count.
+    function resetPomodoro() {
+        root.pomodoroRunning = false
+        root.pomodoroPhase = "work"
+        root.pomodoroPhaseEndsAt = 0
+        root.pausedRemainingMs = 0
+        pomodoroTimer.stop()
+        waterReminderTimer.stop() // scoped to the running session — see _pausePomodoro
         root._persist()
     }
 

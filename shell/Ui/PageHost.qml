@@ -11,6 +11,9 @@ Item {
     required property var knobRouter
     required property var systemStats
     required property var personalCareState
+    required property var knobLighting
+    required property var micState
+    required property var screenBrightness
     required property var hidBridge
     required property var touchRouter
     required property var theme
@@ -18,13 +21,14 @@ Item {
     // Glyphs are Nerd Font (Material Design set) codepoints, rendered through the same
     // fontconfig alias Omarchy uses — see Services/Theme.qml.
     readonly property var pages: [
-        { icon: "󰓅", title: "Dashboard" },
+        { icon: "󰓅", title: "System" },
         { icon: "󰗶", title: "Self Care" },
+        { icon: "󰒓", title: "Settings" },
     ]
     readonly property var pageNames: root.pages.map(function (p) { return p.title })
     readonly property int pageIndex: Math.max(0, Math.min(root.pages.length - 1, root.knobRouter.currentPageIndex))
 
-    // Dashboard's caption is the machine name — cheap to read here, and it keeps
+    // The System page's caption is the machine name — cheap to read here, and it keeps
     // SystemStats untouched.
     property string hostname: ""
     FileView {
@@ -62,6 +66,7 @@ Item {
             switch (root.knobRouter.currentPageIndex) {
                 case 0: return dashboardComp
                 case 1: return careComp
+                case 2: return settingsComp
                 default: return dashboardComp
             }
         }
@@ -69,4 +74,5 @@ Item {
 
     Component { id: dashboardComp; DashboardPage { systemStats: root.systemStats; theme: root.theme } }
     Component { id: careComp; PersonalCarePage { personalCareState: root.personalCareState; touchRouter: root.touchRouter; theme: root.theme } }
+    Component { id: settingsComp; SettingsPage { knobLighting: root.knobLighting; micState: root.micState; screenBrightness: root.screenBrightness; touchRouter: root.touchRouter; theme: root.theme } }
 }

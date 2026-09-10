@@ -275,14 +275,614 @@ fill blends foreground, not accent — `Theme.selectedFill` had accent, now fixe
 
 **Not yet done** — see `NEXT_STEPS.md` for the actionable list.
 
-## 7. Where things live (quick map)
+## 7. Becoming a real Omarchy shell plugin (2026-09-08)
+
+Triggered by "Make a plan for making this an /omarchy plugin with a toggle to use the
+screen as a second screen or as the full app." Investigation (not guessing) found Omarchy
+has a real, documented third-party plugin system — `omarchy plugin add/enable/disable/
+list`, git-checkout-based, loaded **inside** the single long-running `omarchy-shell`
+process — not just a styling convention to imitate, which is all this project had done
+until now. A plan was written (`~/.claude/plans/proud-soaring-crown.md`), approved, and
+implemented and live-tested in the same session.
+
+Key findings that shaped the design, each verified live before being relied on:
+- `background`'s own manifest uses `kind: "service"` even though the shell README
+  describes `service` as "headless, no UI" — its `Background.qml` is a plain `Item` that
+  owns a `PanelWindow` per screen with full `WlrLayershell` control. That's the precedent
+  this project's own service plugin follows.
+- **Stopping this project's own standalone kiosk process, with nothing else changed,
+  revealed Omarchy's own bar and wallpaper already rendering on the DK-QUAKE output** —
+  proving "second screen" mode needs zero new code, only *not covering* the output.
+- The `nightlight` service's `IpcHandler` (`status()/enable()/disable()/toggle()`) plus a
+  thin `bin/omarchy-toggle-nightlight` wrapper is the established toggle pattern this
+  project's own mode flag copies.
+- Entry points are plain relative paths (`shell/Service.qml` is fine, no first-party-only
+  restriction), and every QML document resolves `Qt.resolvedUrl(".")` against its own
+  location regardless of which process loaded it — confirmed live, this is what lets the
+  daemon path resolve correctly whether running standalone or cloned into
+  `~/.config/omarchy/plugins/<id>/`.
+
+What shipped:
+- **`manifest.json`** (repo root) declares `srk78.quake-panel`, `kinds: ["service"]`,
+  `entryPoints.service: "shell/Service.qml"`.
+- **`shell/Service.qml`** (new) — the real entry point. Owns `HidBridge`,
+  `PersonalCareState`, `SystemStats`, `Theme` unconditionally (so the daemon connection
+  and pomodoro/water/stand timers never stop, regardless of mode); a persisted `mode`
+  flag (`"kiosk"`/`"desktop"`, `~/.local/state/omarchy-quake-panel/mode.json`); an
+  `IpcHandler` (`target: "quake-panel"`) with `status()/setMode()/toggleMode()`; a
+  Service-root `Connections` block watching for a **3-second knob hold** (independent of
+  `KnobRouter`, which only exists in kiosk mode) that calls `toggleMode()` — the one
+  toggle surface that works with no window on screen to read input through; and a
+  `Loader { active: mode === "kiosk" }` wrapping the same `PanelWindow`/`PageHost`/
+  `TouchRouter`/`KnobRouter`/overlays setup `shell.qml` already had, recreated fresh each
+  time kiosk mode is re-entered.
+- **`shell/shell.qml` kept**, unchanged, purely as the fast standalone dev/screenshot
+  entry point `capture-panel.sh` already depended on — reloading the whole
+  `omarchy-shell` process on every styling tweak would be far slower.
+- **`ops/omarchy-menu.example.jsonc`**, **`ops/hyprland/keybind.example.lua`**,
+  **`ops/bin/omarchy-quake-panel-toggle`** — three more callers of the same IPC target,
+  none duplicating toggle logic.
+
+**Live-verified this session** (hand-installed via a real copy — not a symlink,
+`omarchy plugin validate` rejects those — at
+`~/.config/omarchy/plugins/srk78.quake-panel/`, `rescanPlugins`, `enable`): the plugin
+loads and renders identically to the standalone process inside real `omarchy-shell`;
+`omarchy-shell quake-panel toggleMode`/`status` and the `ops/bin` CLI wrapper both flip
+the mode and persist it; toggling to desktop mode instantly reveals the bar/wallpaper
+with the output's normal workspace and reserved bar zone intact; the daemon process
+never restarts across a toggle (same PID throughout, since `HidBridge` lives outside the
+`Loader`); the rest of the desktop (other outputs, client count) stayed healthy across
+repeated toggles. **Not yet verified**: the knob's physical 3-second hold (requires
+hands on the real hardware, not something this session could simulate), and touch on
+real hardware while loaded as the plugin specifically (touch itself was already
+reconfirmed working standalone earlier this project, and the Hyprland `wl_touch` bug
+`TouchRouter` works around is compositor-level, not process-level, so no behavior change
+is expected — but only a live tap proves it, same caveat as every prior restyle).
+
+**Deliberately deferred, not forgotten**: the plan's styling-migration piece (replacing
+`Services/Theme.qml`/`Ui/Card.qml` etc. with real `import qs.Commons`/`qs.Ui`, now that
+`Service.qml` actually makes them reachable) was left for its own pass — a visual change
+needs its own screenshot-verified review, and this session's scope was already large
+enough to isolate the plugin-mechanics risk from the styling risk. See `NEXT_STEPS.md`.
+
+The manual `~/.config/omarchy/plugins/srk78.quake-panel/` install used for this session's
+live test is a plain copy (including a synced-in `daemon/node_modules`, since Omarchy's
+installer never runs `npm install`), not git-managed — it works today, but the durable
+install path is `omarchy plugin add <this-repo's-github-url> --enable` once
+`manifest.json`/`shell/Service.qml`/`ops/` are pushed there.
+
+Later small fixes on the live plugin this same day: removed the red WORK/BREAK pill and
+added Reset buttons to Pomodoro and Stand (`resetPomodoro()`/`resetStand()` in
+`PersonalCareState.qml`); found and documented that `omarchy plugin disable`/`enable`
+does **not** reload changed QML from disk (only a genuine file write under the plugin's
+own directory, or a full `omarchy-restart-shell`, does) — see `NEXT_STEPS.md`; fixed
+Reset to leave the pomodoro genuinely idle (full duration, not running) instead of
+auto-starting it, which needed exposing `PersonalCareState.pausedRemainingMs` publicly so
+the page can tell "genuinely paused mid-session" apart from "fresh/just reset" (both are
+`pomodoroRunning === false`); renamed the Dashboard page to "System" (one line,
+`Ui/PageHost.qml`'s `pages` array — both the header title and the page-switch tab read
+from the same source).
+
+## 9. A Settings page, and the knob's RGB ring (2026-09-10)
+
+Added a third page (`shell/Pages/SettingsPage.qml`) exposing the knob's RGB ring color as
+tappable presets, using daemon commands that already existed but had no UI
+(`setLedEffect`/`setLedColor`/`saveLighting`/`getLighting` in `Aris68Connector.js`) — no
+daemon changes needed, only new QML.
+
+- **`shell/Services/KnobLighting.qml`** (new) — queries the ring's actual current color
+  once at daemon connect (`getLighting`) rather than keeping its own persisted
+  preference; the device is the source of truth. `setColor(hue, sat)` forces effect index
+  `1` ("Solid Color" — the conventional first non-off entry in QMK's stock
+  `rgb_matrix_effects` enum, **inferred from convention, not verified against this exact
+  firmware's effect list** — flagged in the file's own header comment and in
+  `NEXT_STEPS.md`) then pushes the color and calls `saveLighting()` to flash it.
+- **A real hard-won gotcha, caught immediately by actually loading the plugin**:
+  `qmllint` passed clean on `KnobLighting.qml`, but it failed to load with "Cannot assign
+  to non-existent default property" — a bare `Connections { ... }` as a direct child of a
+  `QtObject` (unlike `Item`) has no default property to bind to. Fixed by giving it an
+  explicit `property Connections _stateConn: Connections { ... }`, matching the pattern
+  `PersonalCareState.qml`'s own `Timer`/`FileView`/`Process` children already use.
+  **`qmllint` does not catch this class of error — only a real plugin load does.**
+- **Verified end-to-end on real hardware, not just via screenshot**: set the ring to blue
+  through a temporary debug IPC hook, then did a full `omarchy-restart-shell` (a
+  completely fresh daemon connection, fresh `KnobLighting` instance with no local state)
+  and confirmed `getLighting()` genuinely read back hue=170/sat=255 from the device
+  itself — proof the color really flashed to the hardware and survived a real
+  reconnect, not just an optimistic local UI guess. The one thing this session could not
+  verify is what the physical LED ring actually looks like — no camera on this hardware,
+  only firmware-level confirmation that the device accepted and stored the value.
+- `KnobRouter.pageCount` is now 3 (System/Self Care/Settings); Settings' knob `press` is
+  a no-op for now, same as System's.
+
+**Same day, follow-up request**: added a "None" ring preset (turns the ring fully off —
+`setLedEffect(0)`, the documented "All Off" index, not a color at all) and a microphone
+on/off toggle (`shell/Services/MicState.qml`, wrapping the daemon's pre-existing
+`setMic`/`queryMic` commands the same `getLighting`-style query-on-connect pattern).
+
+- **`KnobLighting.isCurrent()` now also checks `effect === solidColorEffect`**, not just
+  hue/sat — otherwise a ring that's off but still remembers an old color internally would
+  wrongly highlight that color's swatch. This was **not a hypothetical edge case**: the
+  ring's actual state when this was tested was genuinely off with a leftover hue that
+  exactly matched the Green preset, and the fix correctly showed "None" as current with
+  no color swatch highlighted, no coincidence "test" needed to construct it.
+- Both new pieces got the same real-hardware verification as the color picker: toggled
+  the mic and confirmed the query round-trip reflects it; set a color, restarted the
+  shell fully fresh, and confirmed `getLighting()` still reported it — genuine flash
+  persistence, not a UI guess. The mic was found on at the very start of this check and
+  restored to on before finishing, since muting it wasn't something asked for.
+- `MicState.qml` and `KnobLighting.qml` both wrote their non-visual `Connections`
+  children as named properties (`property Connections _stateConn: Connections {...}`)
+  from the start this time, having just learned the hard way (above) that a bare one
+  under `QtObject` fails at load with no `qmllint` warning.
+
+## 11. Dimmable ring brightness, and fixing the Settings layout (2026-09-10)
+
+Two requests in one turn: "make the knob ring light dimmable" and "fix the settings page
+layout." Both landed in the same file set.
+
+- **Brightness**: `KnobLighting.qml` gained `brightness`/`brightnessPresets`
+  (25/50/75/100%, mapped to `setLedBrightness`'s documented ~247 ceiling: 62/124/185/247)
+  and `setBrightness()`/`isCurrentBrightness()`, mirroring the color picker's shape
+  exactly (query-on-connect, `saveLighting()` to flash, tolerance-based "current" check
+  since `setLedBrightness`'s own comment says "device quantizes"). **The quantization
+  wasn't hypothetical either**: requesting 124 and restarting fresh, the device reported
+  back 119 — a 5-unit gap the `<6` tolerance was specifically chosen to absorb, confirmed
+  correct by this exact real reading, not assumed.
+- **A second, different `qmllint`-blind bug, caught the same way as the first**: tried to
+  extract one shared `PresetColumn`/`PresetSwatch` pair (a `default property alias
+  content: contentItem.data`) to de-duplicate the color-swatch and brightness-swatch
+  Repeater delegates. `qmllint` passed clean; loading the plugin threw `TypeError: Cannot
+  read property 'off'/'value' of undefined` at runtime. Root cause: the default-property
+  alias silently redirects a delegate's declared children into the wrapper `Item`
+  (`contentItem`), so `parent` inside the swatch was that wrapper, not the delegate
+  holding `modelData` — `parent.modelData` was reading a property that simply isn't
+  there. Fixed by reverting to two small, duplicated, directly-scoped inline delegates
+  (each `modelData` reference resolves in the same scope it's declared in, no indirection)
+  rather than chasing the abstraction further — correct and boring beat clever and broken.
+  **Second confirmation this session that `qmllint` doesn't catch every real class of
+  QML load/runtime error** — a real device load remains the only reliable check.
+- **The layout fix itself**: the color row (needs the full page width for ten swatches)
+  stayed a full-width block up top; Brightness and Microphone — each far narrower — were
+  moved into a shared second row, split by a vertical separator, reusing `Ui/Section.qml`
+  (promoted out of `PersonalCarePage.qml`'s previously page-local `Section` component,
+  now `required property var theme` instead of implicitly closing over an inline `root`).
+  This fills the page's height instead of one top-aligned block leaving a large empty
+  area below it — but the FIRST version of this still overflowed the panel's real
+  480px height (hint text under both KNOB COLOR and BRIGHTNESS, plus `xxl` gaps around
+  the middle separator, added up to more vertical space than a 1920×480 panel actually
+  has after the header). Caught immediately from the same live screenshot: brightness
+  swatches cut off at the very bottom edge, and the Microphone section's label/button
+  visibly overlapping in too little height. Fixed by dropping both hint texts, shrinking
+  `xxl` gaps to `lg`, and shrinking every swatch from `space(64)` to `space(48)` — this is
+  the second time in this project a layout looked fine in isolation but didn't fit this
+  panel's unusually short, wide aspect ratio; there is no substitute for a real capture
+  at 1920×480 specifically, a normal-aspect mockup would not have shown either overflow.
+
+## 13. A real slider, and screen brightness (2026-09-10)
+
+Same-day follow-up: rename "BRIGHTNESS" to disambiguate from screen brightness, replace
+the discrete presets with an actual slider, and — asked as a question first, "is it also
+possible?" — screen brightness turned out to be a genuinely separate, already-half-wired
+daemon command (`setBrightness`/`queryLuminance`, Aris68Connector.js's "legacy 0xA3
+path", distinct from the ring's VIA channel), so it shipped in the same pass rather than
+just being answered.
+
+- **`TouchRouter.qml` gained real drag support** (`registerDrag(item, onStart, onMove)`
+  alongside the existing `registerTap`) — this app's first continuous, not tap-once,
+  touch control. A drag session is distinguished from a tap session only at its first
+  point: if that point hits a drag target, every subsequent point in the same session
+  (session = "still recent", same staleness model as taps) goes to `onMove` instead of
+  being debounced away; a tap session's later points were always ignored the same way
+  before this, so existing tap behavior is provably unchanged. No proactive "drag ended"
+  signal exists — the next touch anywhere resets `_activeDrag` via the same staleness
+  check that already ran for taps, so a slider's own settle-timeout is what a consumer
+  uses to mean "released," not a TouchRouter callback.
+- **`Ui/Slider.qml`** (new) — the shape both new brightness controls needed: a
+  fill-track + thumb, driven by `registerDrag`, throttling its own `settled(value)`
+  signal (trailing-edge, ~90ms) so a fast drag can't flood a real USB HID device with
+  writes. `KnobLighting.previewBrightness()` additionally debounces the *flash write*
+  (`saveLighting()`) separately and much less often (700ms after the last change) —
+  flash has real write-cycle endurance limits, unlike the live brightness write itself.
+- **`Services/ScreenBrightness.qml`** (new) — same query-on-connect/device-is-truth
+  shape as `KnobLighting`/`MicState`, wrapping `setBrightness`/`queryLuminance`. No
+  save/persist command exists for it in the driver, so (like the mic) it likely doesn't
+  survive a power cycle — see NEXT_STEPS.md.
+- **Verified the new TouchRouter drag path with the real dispatch code, not a shortcut**:
+  a temporary debug hook read each registered drag target's actual on-screen bounds
+  (`item.mapToItem(null,0,0)`), then fed a synthetic multi-point sequence through the
+  exact same `TouchRouter.feed()` real touch goes through — confirmed the value moves
+  correctly across a full simulated drag (0%→70%→exact expected byte value both times).
+  Hit one, and only one, transient hiccup along the way, tracked down and worth
+  recording since it reveals something real about the debounce model: a fresh test
+  begun **inside the still-active previous session** (same simulated-drag helper called
+  again well within the actual staleness window) had its first point silently continue
+  the *old* target's drag instead of starting a new one, and a separate test used an
+  exact-boundary fraction (1.0, the target's literal right edge) that a `Math.round()`
+  pushed a fraction of a pixel past the real float boundary, missing the hit-test
+  entirely — both were artifacts of the synthetic test harness's own timing/rounding,
+  not bugs in `TouchRouter`, `Slider`, or either service; the real, continuous drag path
+  worked correctly every time it was actually exercised end to end.
+- Still true from the ring-color/mic work: **no camera on this hardware** — the software
+  round-trip (set brightness, full restart, read the same value back) is confirmed for
+  both the ring and the screen, but nobody has looked at either to confirm the ring
+  visibly dims or the screen backlight actually changes. A `grim` screenshot specifically
+  **cannot** show this either way — it captures the rendered framebuffer, not the
+  physical backlight, so a dimmed screenshot was never going to be possible even if the
+  command works perfectly.
+
+## 15. A real, pre-existing bug the slider finally made visible: a phantom "Mouse" device
+
+Reported live, immediately after the slider work above: "Changing the slider seems to
+affect the main screen too. I can scroll the main screen by touching the device's
+screen." This turned out to be a genuine, previously-undiscovered gap in this project's
+whole HID setup — not a new bug introduced by the slider, but one the slider was simply
+the first thing to make *visible*.
+
+**Root cause, found by reading Hyprland's own libinput debug log
+(`/run/user/1000/hypr/<instance>/hyprland.log`) while the panel was touched**: the
+panel's raw touch hardware (vendor 0712:0010, "hotlotus" in
+`ops/udev/99-omarchy-quake-panel.rules`) auto-registers with the kernel as **more than
+one** input device. Alongside the vendor-specific touch usage page this project's own
+daemon reads directly via hidraw — the whole reason `Aris68Connector.js`/`uinputTouch.js`
+exist, per this project's own README: "the panel's touchscreen uses a vendor-defined HID
+usage page (0xFF73), so it never shows up as a normal OS input device on its own" — its
+HID report descriptor *also* exposes a standard-usage-page "Mouse" collection that
+Linux's generic HID driver **can** parse as real relative pointer motion. The log showed
+it plainly: `libinput: New device hotlotus wcidtest Mouse` / `device is a pointer`,
+entirely separate from `omarchy-quake-panel-touch` (this project's own virtual
+re-emission, which *is* correctly bound to the panel's output in
+`~/.config/hypr/input.lua`). Nothing in this project ever bound or disabled this second,
+phantom device, so its motion went wherever Hyprland's default pointer-output happens to
+be — the primary/laptop screen.
+
+**Why this was invisible until today**: every touch interaction before the brightness
+sliders was a quick, discrete tap (buttons, color swatches) — a stray click landing
+somewhere on the main screen rarely does anything noticeable. The sliders introduced the
+first *sustained, continuous* touch-drag in this app's history, and a continuous phantom
+pointer drag reads immediately and unmistakably as scrolling. The underlying bug has
+almost certainly existed since this project's very first hardware bring-up; dragging
+just finally made it visible.
+
+**Fix**: `hl.device({ name = "hotlotus-wcidtest-mouse", enabled = false })`, added to
+`~/.config/hypr/input.lua` (the user's live config, outside this repo) and mirrored into
+`ops/hyprland/input.example.lua`. Disabled outright rather than confined to the panel's
+own output like the touch device is: this "Mouse" collection has no legitimate use for
+this project even there — it would still jump/click a real cursor around in "desktop
+mode" (`shell/Service.qml`'s mode toggle) if only confined rather than disabled. This is
+Omarchy's own first-party pattern for disabling a named input device, not something
+invented for this project — see `/usr/share/omarchy/default/hypr/disabled-input-device.lua`.
+
+**A second, smaller gotcha caught while writing the fix**: `hl.device({name=...})`
+matches Hyprland's own *normalized* device name (lowercase, hyphens for spaces — the
+form `hyprctl devices` itself prints), not the raw, human-readable name libinput's debug
+log shows. The first attempt used the log's literal spelling, `"hotlotus wcidtest
+Mouse"`, which `hyprctl reload` accepted without error but silently matched nothing (the
+device still appeared in `hyprctl devices -j` afterward). Confirmed correct once
+rewritten as `"hotlotus-wcidtest-mouse"`, matching `hyprctl devices`' own listing exactly
+— worth remembering for the existing touch-device binding too, which only ever "worked"
+without hitting this because this project happened to choose an already-hyphenated name
+(`omarchy-quake-panel-touch`) for its own virtual device in the first place.
+
+**Not independently verified**: whether the fix actually stops the scrolling. Hyprland
+does not expose a device's enabled/disabled state via `hyprctl devices -j` (no field for
+it), and unlike this project's own virtual touch device, there is no software hook to
+feed synthetic input through this specific kernel-level phantom device to test it
+directly — confirming this needs the same physical retest that reported the bug in the
+first place. If scrolling persists, the plain `hotlotus-wcidtest` touch-tagged device
+(not the "-mouse" one) is the next suspect — left alone this round since the
+vendor-specific-usage-page reasoning above suggests it's likely inert, but that's
+reasoning, not a live confirmation.
+
+**Superseded by §16 below**: the user retested and the scrolling persisted. A proper
+from-scratch kernel-level investigation (reading every input device directly, not
+guessing from names) showed this whole theory, plausible as it looked, was wrong.
+
+## 16. The real investigation: still unresolved, and an important correction
+
+The user retested §15's fix and the scrolling persisted. What followed was a genuine,
+from-scratch diagnostic session — worth recording in full both because the bug is still
+open and because it surfaced an important gap in how this whole session verified touch.
+
+**First, a correction that matters more than the bug itself**: every "touch confirmed
+working" claim made anywhere in §7 through §15 of this file — the color picker, the
+brightness presets, the mic toggle, the slider's own drag mechanism — was verified via a
+temporary debug `IpcHandler` method calling `TouchRouter.feed()` or the underlying
+service function **directly, in software**. That path exercises this app's own internal
+dispatch (`HidBridge → TouchRouter → QML callback`) and nothing else — it never touches
+`uinputTouch.js`, `/dev/uinput`, the kernel, libinput, or Hyprland's output routing,
+which is exactly where this bug turned out to live. None of that testing could have
+caught this regardless of when the underlying problem started. The lesson: a debug hook
+that calls the same function real input calls is a genuinely useful test of *this
+app's own logic*, but it is not evidence about the OS-level delivery path, and should
+never have been described in a way that implied it was.
+
+**The actual investigation, in order**:
+1. Checked Hyprland's own `libinput` debug log (`disable_logs` is `true` by default —
+   had to be flipped live via `hyprctl eval "hl.config({debug={disable_logs=false}})"`,
+   since `hyprctl keyword` doesn't work with this Lua-based config's non-legacy parser)
+   while the user dragged a slider. **First attempt caught nothing at all** — the log
+   file's own last-write timestamp hadn't moved in over an hour despite two confirmed
+   drags in between, meaning Hyprland's debug logging path itself wasn't a reliable
+   real-time signal here (verified live via `/proc/<pid>/fd` that Hyprland did still
+   hold the log file open — the log just wasn't a useful window into this).
+2. Switched to reading raw kernel `struct input_event` records directly from
+   `/dev/input/eventN` (this account is in the `input` group, so this needs no root) —
+   entirely bypassing Hyprland/libinput. First guessed at the two "hotlotus" devices
+   from §15 specifically; **zero events from either during a confirmed drag** — ruling
+   out that whole theory outright, not just leaving it unconfirmed.
+3. Escalated to watching **every single readable `/dev/input/event*` node at once**
+   (25 devices) rather than guessing further — removes all ambiguity about which device
+   is responsible. This is the method that should have been used from the start of the
+   diagnosis, not the second resort. **This time, exactly one device fired**:
+   `/dev/input/event9`, `omarchy-quake-panel-touch` — this project's own virtual touch
+   device — emitting textbook-correct `ABS_MT_POSITION_X`/`ABS_MT_POSITION_Y` data
+   tracking the entire drag. (One other device, the laptop's own physical keyboard,
+   fired unrelated key events during the same window — plain noise, not a candidate.)
+4. This means the device itself is not malfunctioning — `uinputTouch.js` is doing
+   exactly what it should. The bug is specifically that
+   `ops/hyprland/input.example.lua`'s own long-standing binding
+   (`hl.device({name="omarchy-quake-panel-touch", output="desc:BOE DK-QUAKE"})`) is not
+   confining this device's real touch to the panel's output, despite every check on the
+   binding itself coming back clean: the device name matches `hyprctl devices` exactly,
+   the monitor description matches `hyprctl monitors` exactly (`'BOE DK-QUAKE'`), and
+   `hyprctl reload`/`hyprctl eval` both report success with no config errors.
+5. Confirmed via the installed `/usr/include/hyprland/src/devices/ITouch.hpp` header
+   that Hyprland genuinely has a dedicated `std::string m_boundOutput` field on its
+   touch-device object — so per-device touch output binding is a real, intended
+   mechanism in this Hyprland version, not something touch devices are silently
+   excluded from. The actual assignment logic lives in `.cpp` files this machine's
+   headers-only package doesn't ship, so it couldn't be inspected further this way.
+6. Tried, in order, none of which changed anything (each followed by the user actually
+   re-dragging the slider, not assumed): forcing a fresh device reconnect via `omarchy
+   plugin disable`/`enable` (destroys and recreates the virtual device, on the theory
+   that output binding only applies at connect-time and this device had been running
+   since before some of today's config edits); then applying the identical binding as a
+   direct `hyprctl eval` one-liner — bypassing the config file and any possible Lua
+   `require`-caching issue with plain `hyprctl reload` — followed by *another* fresh
+   reconnect.
+7. **Current leading hypothesis, not yet tested**: this project already has one
+   documented precedent for exactly this class of symptom. §4's stuck-mouse-button bug
+   states plainly: "This bug required a full logout/login to clear once triggered —
+   killing the daemon or unplugging the panel did not clear the stuck state." Today
+   involved an unusually large number of repeated daemon/virtual-device reconnects
+   (dozens, across a full session of feature work) — if Hyprland's own internal
+   input-routing state can get stuck in a similar way, only a full compositor restart
+   (not a config reload) would clear it. A full session restart is disruptive enough
+   that trying it is the user's call, not something to do unprompted.
+
+**Status: unresolved as of §16.** See §18 below for what actually fixed it.
+
+## 17. A full logout/login, a fresh diagnostic clue, and one more dead end
+
+The user tried a full session restart (logging out and back in — a genuine fresh
+Hyprland process, not just a config reload). **The bug survived it**, ruling out §16's
+"stuck compositor state" hypothesis outright — nothing about Hyprland's *own* internal
+state was the cause.
+
+A new detail came with that retest: **dragging exactly horizontal did not scroll the
+main screen; only vertical motion did.** This looked at first like it might point to an
+entirely different mechanism (a gesture recognizer, a touchpad-style axis distinction),
+but on reflection it's fully consistent with the existing diagnosis, not a new one: if
+genuine absolute touch position is landing on a real window on the main screen (exactly
+what §16 already confirmed at the kernel level), *of course* only the vertical component
+reads as a scroll — that's how virtually every scrollable UI (browsers, GTK, etc.)
+already interprets touch-drag, whether or not the touch was supposed to be there.
+Horizontal-only motion on most content simply has nothing to do.
+
+Verified Hyprland's exact native config keys for this via the installed
+`/usr/include/hyprland/src/config/values/ConfigValues.hpp` (rather than guessing at Lua
+syntax): `input:touchdevice:output`, `:transform`, `:enabled` — the *global* form,
+distinct from the per-device `hl.device({output=...})` already tried. Applied it live
+(`hyprctl eval "hl.config({input={touchdevice={output='desc:BOE DK-QUAKE'}}})"`) and, for
+the first time in this whole investigation, **confirmed it was actually active**
+(`hyprctl getoption` returned `set: true` — a check the per-device binding never offered,
+since Hyprland doesn't expose per-device bound-output state through any `hyprctl` query).
+Also independently re-verified our own device's declared coordinate range via a direct
+`EVIOCGABS` ioctl read (`ABS_MT_POSITION_X`/`Y`: 0–1919 / 0–479, exactly matching the
+panel) — ruling out a coordinate-space mismatch as the cause. **The user retested; the
+global binding, confirmed active, still did not fix it.**
+
+At this point every reasonable Hyprland-level configuration lever had been tried,
+confirmed applied, and confirmed insufficient: per-device binding (file and live-eval,
+both confirmed matching by name and by monitor description), a global fallback
+(confirmed active via `getoption`, the one check the per-device form never allowed), two
+fresh device reconnects, and a full session restart. The remaining gap is inside
+Hyprland's own `.cpp` implementation, which this machine's headers-only dev package
+doesn't ship — not something further configuration or diagnosis from this project's side
+was going to resolve.
+
+## 18. The actual fix: stop needing an answer to the question at all
+
+Reframed the problem. This app's own kiosk UI (`TouchRouter.qml`) has **never** used the
+virtual `/dev/uinput` touch device for anything — it reads touch directly from the same
+daemon JSON stream the virtual device is built from, specifically *because* real
+Wayland/Hyprland touch delivery to a layer-shell surface doesn't work at all (the
+original, unrelated bug `TouchRouter` exists to route around — see §2). The virtual
+device has exactly one real purpose in this whole project: letting an *ordinary* window
+receive real touch in "desktop" mode. In "kiosk" mode — the default, and everything this
+whole debugging session was testing — it does nothing useful and was the entire and only
+mechanism by which touch could reach the wrong screen. So: stop creating it in kiosk
+mode. Not "fix the routing" — remove the one component capable of ever misrouting in the
+first place.
+
+- **`daemon/src/bridge.js`** gained a `setVirtualTouch` command
+  (`{cmd:"setVirtualTouch", on:bool}`) calling `uinputTouch.start()`/`.stop()` — both
+  already existed, already idempotent, and `feed()` already no-ops safely when the
+  device isn't running (`if (this.fd === null) return`), so this needed zero changes to
+  `uinputTouch.js` itself, the single most historically fragile file in this project
+  (§4's "longest and highest-risk phase," the stuck-mouse-button bug). The daemon's own
+  default startup behavior (auto-start) is unchanged, so `shell/shell.qml`'s standalone
+  dev path — which has no mode concept at all — keeps working exactly as before.
+- **`shell/Service.qml`** sends this command on every mode change (`onModeChanged`,
+  which fires regardless of *how* `mode` changes) and once more as soon as the daemon
+  connects (covering the compiled-in default value before the persisted mode has even
+  loaded): `on: mode === "desktop"`.
+- **Verified, not assumed**: after this shipped, `/proc/bus/input/devices` showed **zero**
+  `omarchy-quake-panel-touch` entries while in kiosk mode — the device architecturally
+  does not exist, not "exists but is hopefully confined." Toggling to desktop mode and
+  back showed it appear and disappear exactly on cue. A synthetic drag fed through
+  `TouchRouter.feed()` directly (bypassing the now-absent virtual device entirely, since
+  this app's own dispatch never used it) confirmed the Settings sliders still track
+  correctly — this app's own UI is completely unaffected by the device's absence, exactly
+  as predicted by `TouchRouter`'s own design.
+- **What this does and doesn't prove**: this is architecturally certain to eliminate the
+  reported symptom in kiosk mode — there is no code path left that could deliver this
+  app's touch to the OS while a real device to do it with doesn't exist. It says nothing
+  about *why* Hyprland's own output binding wasn't confining it, which remains
+  genuinely unresolved and is no longer this project's problem to solve, since it no
+  longer depends on that mechanism working at all. If the exact same symptom is ever
+  seen again specifically in "desktop" mode (where the virtual device is still needed
+  and still created), that would be new information — the Hyprland-side mystery
+  documented in §16/§17 remains the reference for investigating it, but note desktop
+  mode differs in one relevant way already confirmed elsewhere in this project's
+  history: a *real* window is present there, and ordinary (non-layer-shell) windows were
+  already confirmed to receive Wayland touch correctly, unlike this app's own kiosk
+  surface.
+
+**Confirmed by the user's own hand, same day**: dragged a Settings slider in kiosk mode
+— no more scrolling on the main screen. This closes the loop this whole multi-section
+investigation (§15–§18) was working toward. Status: **resolved for kiosk mode.** Desktop
+mode's open question (above) stands as the only remaining unknown.
+
+## 19. A design pass on the Settings page (2026-09-10)
+
+Ran the `omarchy-design` skill against `Pages/SettingsPage.qml` specifically. Most of
+the page already matched the verified conventions correctly (separator vs control-border
+alpha, darkened-foreground secondary text, glyph usage, spacing) — one real
+inconsistency stood out: the KNOB LIGHT BRIGHTNESS and SCREEN BRIGHTNESS columns both
+lead with a bold hero-style value (their percentage) before their control, matching this
+app's own established pattern everywhere else (System's CPU/Memory/Network, Self Care's
+Pomodoro/Water/Stand). The MICROPHONE column instead led with a full dimmed sentence
+("Panel microphone is on/off") — the one place on the page breaking that rhythm.
+
+Fixed by replacing the sentence with a bold "On"/"Off" hero value in `theme.foreground`
+at `font.title`, matching the other two columns' exact size/weight/baseline. **First
+attempt added this as a second line below a kept detail sentence — wrong**: this row's
+vertical budget was already tight (the same budget documented in §11's layout fix
+earlier this project), and the extra line collided visibly with the bottom-anchored
+button, caught immediately from the live capture. Corrected to a single line, replacing
+the sentence rather than adding to it, restoring the exact line count that was already
+proven to fit.
+
+**Then removed entirely, per direct user feedback**: "Just above the Microphone toggle,
+the word on/oof is shown, but the state is already shown correctly inside the toggle.
+Please remove the one just above the toggle." The hero value fixed the overlap, but it
+was still redundant — `Ui/PanelButton`'s own label already reads "On"/"Off", so the
+Microphone column ended up saying the same word twice. The other two lower-row columns
+(Knob Light Brightness, Screen Brightness) keep their hero value because their `Slider`
+has no label of its own to duplicate; Microphone's control does, so it doesn't need one.
+Verified live: deployed, `omarchy-restart-shell`, navigated to Settings via a temporary
+debug hook, screenshot confirmed the redundant text is gone and the button reads cleanly
+with no overlap, then the debug hook was removed and the shell restarted clean once more.
+
+**Considered and deliberately left alone**: the color swatches' "current" indicator uses
+an opaque, doubled-width `theme.foreground` border, which is a stronger treatment than
+`omarchy-conventions.md`'s documented row-selection idiom (fill only, no border, by
+default). Not changed — that convention was verified from Omarchy's *list row* selection
+pattern (Wi-Fi/bluetooth device rows), which isn't a clean analogue for "which color
+swatch is currently active." Flagging the reasoning here rather than silently applying a
+convention outside where it was actually verified.
+
+Verified via two live captures against the real, running plugin (not a throwaway
+process) — the first catching the overlap bug, the second confirming the fix — and sent
+to the user for final visual confirmation.
+
+## 20. A top-bar dropdown for the mode toggle (2026-09-10)
+
+User request: "Toggle between modes from a dropdown in the top bar" — a sixth surface
+alongside the knob long-hold, raw IPC, CLI wrapper, menu entry, and keybind (§7), all of
+which already existed but all of which require either physical hardware access or
+knowing a command to run. A bar dropdown is the one surface discoverable by just looking
+at the screen.
+
+**Architecture**: `manifest.json` gained a second `kinds` entry, `"bar-widget"`, and a
+second entry point, `shell/BarWidget.qml` — the exact split `omarchy.media` uses for its
+own two-kind manifest (confirmed by reading it): `Service.qml` is always loaded and owns
+the real state (`mode`, `setMode()`, the `IpcHandler`), `BarWidget.qml` only mounts while
+a bar is on screen and is a thin read/write client of that state, never a second source
+of truth. The link between them is `bar.shell.serviceFor("srk78.quake-panel")` —
+`shell.qml`'s own generic lookup for *any* enabled service-kind plugin by id (confirmed
+in source: `firstPartyServiceFor()` is a one-line alias over the same `serviceFor()`,
+despite the name — nothing about it is actually first-party-only). This returns
+`Service.qml`'s root `Item` directly, so `service.mode`/`service.setMode()` are the exact
+same properties/functions the knob and IPC already used. No new IPC target, no duplicated
+mode state.
+
+The widget itself (`BarWidget.qml`) is built entirely from real `qs.Ui`/`qs.Commons`
+components — genuinely available here, unlike the shared `Pages/`/`Ui/` files that also
+have to run under the standalone `shell/shell.qml` dev entry point (see
+`project-styling-notes.md`) — since a bar-widget only ever runs inside `omarchy-shell`
+itself: `BarIconButton` for the bar icon, `PopupCard` for the dropdown (a lighter,
+click-dismissed popup than the keyboard-navigable `KeyboardPanel` the network/power
+panels use — this widget has two rows and no keyboard nav requirement, so the simpler
+base fit), and the exact selected-row `BorderSurface` idiom `omarchy.media`'s own
+`BarWidget.qml` uses for its source-player list, reused verbatim for the Kiosk/Second
+screen rows.
+
+**Two real gotchas hit getting this actually enabled and rendering, both confirmed live,
+neither obvious from the README**:
+
+1. **A stale `plugins[]` entry silently blocks bar placement.** Before this session, the
+   manifest only declared `kinds: ["service"]`, and `shell.json` had a top-level
+   `plugins: [{"id": "srk78.quake-panel"}]` entry — the mechanism the README documents
+   for enabling a service/panel/overlay plugin. Adding `"bar-widget"` to `kinds` and
+   running `omarchy plugin enable srk78.quake-panel --section right` reported success
+   ("Enabled and moved...") but placed nothing — `omarchy plugin list` kept showing it
+   disabled, and no widget appeared anywhere. Read `PluginRegistry.qml`'s `setEnabled()`
+   source to find why: it only inserts a `bar.layout` entry when
+   `!findEntryLocation(config, key).found` — and `findEntryLocation` matches the stale
+   top-level `plugins[]` entry just as readily as a real bar-layout entry, so it thought
+   the widget was "already placed" and did nothing. Fixed by deleting the stale
+   `plugins[]` entry first, then re-running the enable command, which then correctly
+   created a `bar.layout.right` entry — after which `srk78.quake-panel`'s own `mode`
+   property (read via `serviceFor()`, independent of `plugins[]`) kept working the whole
+   time, since `_syncServices()`'s own `isEnabled()` check matches a `bar.layout` entry
+   just as well as a `plugins[]` one. Worth remembering for anyone converting an
+   existing service-only plugin to also be a bar-widget: drop the old `plugins[]` entry
+   first, or the CLI's success message is misleading.
+2. **A Nerd Font codepoint's conventional name does not reliably predict what it renders
+   as.** The first icon chosen for kiosk mode, 0xF0F26 (nominally "tablet" in the
+   Material Design Icons set this project has referenced before, e.g. §11's brightness
+   icons), rendered on the real bar as an unrelated media skip-forward glyph — confirmed
+   by screenshotting the real bar, not by `fc-query`/cmap presence (the codepoint IS
+   present in the font; presence was never the issue, only which glyph lives there in
+   this exact Nerd Font patch revision). Also caught along the way: this project's bar
+   font is **JetBrainsMono Nerd Font** (`fc-match monospace`), not the CaskaydiaMono this
+   session had been checking glyph coverage against for the panel's own pages — the two
+   happened to agree on the codepoints checked so far, which is what let the mismatch go
+   unnoticed until now. Fixed properly this time by rendering each candidate codepoint
+   with the *actual* font file via a quick PIL script and reading the result, rather than
+   trusting a name-to-codepoint table from memory — landed on 0xF011C ("cellphone" in
+   the same MDI set), which does render as a plausible small-touchscreen-device
+   silhouette in this font. `Service.qml`'s icon choices from earlier sessions were not
+   re-audited this way and could have the same latent issue; worth a real screenshot
+   check if any of them ever look wrong on hardware.
+
+**Verified live**: the widget loads with no QML errors (`journalctl --user -t
+omarchy-shell`, clean); its bar icon genuinely tracks `mode` — toggling via
+`omarchy-shell quake-panel setMode kiosk|desktop` and diffing before/after screenshots of
+the primary screen's bar isolated the exact icon and confirmed it swaps between the
+device glyph and the monitor glyph on every toggle, on the real running plugin (not a
+synthetic `TouchRouter.feed()`-style test). **Not yet verified**: actually clicking the
+icon and a dropdown row with a real mouse — this machine has no pointer-click simulation
+tool available (`ydotool`/`wlrctl`/`dotool` all absent, only `wtype` for keyboard), so
+the popup open/close and row-click-to-`setMode()` wiring rests on `PopupCard`/
+`BarIconButton`'s own extensively-used first-party behavior plus a source-level read of
+the click handler, not a live click. Should be checked with an actual mouse at some
+point, though risk is low since nothing here is bespoke touch code.
+
+## 21. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
+| Plugin manifest | `manifest.json` |
 | HID/USB driver | `daemon/src/Aris68Connector.js` |
 | Daemon CLI entry | `daemon/src/bridge.js` |
 | Virtual touchscreen | `daemon/src/uinputTouch.js` |
-| Kiosk window entry point | `shell/shell.qml` |
+| Real plugin entry point (mode toggle, IPC) | `shell/Service.qml` |
+| Top-bar mode-toggle dropdown (§20) | `shell/BarWidget.qml` |
+| Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
 | Touch hit-testing workaround | `shell/Services/TouchRouter.qml` |
@@ -293,8 +893,16 @@ fill blends foreground, not accent — `Theme.selectedFill` had accent, now fixe
 | Overlays | `shell/Ui/ToastOverlay.qml`, `shell/Ui/WaterAmountPicker.qml` |
 | Shared styled components | `shell/Ui/Card.qml`, `SectionLabel.qml`, `SectionSeparator.qml`, `PanelButton.qml`, `PageHeader.qml` |
 | Page chrome + page switching | `shell/Ui/PageHost.qml` |
+| Knob RGB ring color + brightness | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml` |
+| Screen brightness | `shell/Services/ScreenBrightness.qml` |
+| Panel microphone on/off | `shell/Services/MicState.qml` |
+| Shared section-column shape (Self Care + Settings) | `shell/Ui/Section.qml` |
+| Touch-drag slider (Ui/Slider.qml's own TouchRouter support) | `shell/Ui/Slider.qml`, `shell/Services/TouchRouter.qml` |
+| Virtual touch device on/off by mode (§18's fix) | `daemon/src/bridge.js`'s `setVirtualTouch`, `shell/Service.qml`'s `_syncVirtualTouch` |
 | Styling skill | `.claude/skills/omarchy-design/` |
+| Mode-toggle samples (menu/keybind/CLI) | `ops/omarchy-menu.example.jsonc`, `ops/hyprland/keybind.example.lua`, `ops/bin/omarchy-quake-panel-toggle` |
 | udev/Hyprland/modules-load examples | `ops/` |
+| Phantom "Mouse" device disable (real hardware gotcha) | `ops/hyprland/input.example.lua` |
 
 Durable cross-session notes (permissions gotchas, hardware bring-up) also live in this
 machine's assistant memory at

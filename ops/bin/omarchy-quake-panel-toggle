@@ -1,0 +1,19 @@
+#!/bin/bash
+# Toggle the DK-QUAKE panel between kiosk (Dashboard/Self Care) and an ordinary second
+# screen. Thin wrapper around the plugin's own IPC target (shell/Service.qml's
+# IpcHandler) — the same call the sample menu entry and Hyprland keybind in ops/ use.
+# Not an `omarchy <group> <command>` — third-party plugins can't add those, so this is
+# just a plain script; put it on your PATH (e.g. symlink into ~/.local/bin) if you want a
+# named command instead of remembering the raw IPC invocation.
+#
+# Usage:
+#   omarchy-quake-panel-toggle           # flip kiosk <-> desktop
+#   omarchy-quake-panel-toggle --status  # print the current mode, don't change it
+
+set -euo pipefail
+
+if [[ ${1:-} == "--status" ]]; then
+  omarchy-shell quake-panel status
+else
+  omarchy-shell quake-panel toggleMode
+fi

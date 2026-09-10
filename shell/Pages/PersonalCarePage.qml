@@ -9,8 +9,9 @@ import "../Ui"
 // Touch buttons are provided alongside the knob gestures (press = start/pause pomodoro on
 // this page, hold = open the water-amount picker from any page). Ui/PanelButton registers
 // itself with TouchRouter — see TouchRouter.qml for why plain TapHandler alone doesn't
-// receive real touch input here.
-// Work/break use theme.red/theme.green as a semantic (not decorative) signal.
+// receive real touch input here. Pomodoro and Stand each also get a Reset button
+// (PersonalCareState.resetPomodoro()/resetStand()) — a second PanelButton in the same
+// row as the primary action, via Section's `button`/`button2` slots.
 Item {
     id: root
     required property var personalCareState
@@ -22,11 +23,17 @@ Item {
 
     readonly property bool working: root.personalCareState.pomodoroPhase === "work"
     readonly property real pomodoroRemainingMs: Math.max(0, root.personalCareState.pomodoroPhaseEndsAt - root._now)
+    // pomodoroRunning === false covers two different situations: paused mid-session
+    // (resume continues from pausedRemainingMs) and fresh/just-reset (nothing to resume,
+    // pausedRemainingMs === 0). Only the former should read as "Paused" — the latter
+    // shows the phase's full duration instead, so Reset doesn't masquerade as a pause.
+    readonly property bool pausedMidSession: !root.personalCareState.pomodoroRunning && root.personalCareState.pausedRemainingMs > 0
+    readonly property real pomodoroPhaseDefaultMs: root.working ? root.personalCareState.pomodoroWorkMs : root.personalCareState.pomodoroBreakMs
 
     // Surfaces in the page header's status caption (Ui/PageHost.qml).
     readonly property string heroMeta: root.personalCareState.pomodoroRunning
         ? (root.working ? "Work" : "Break") + " · " + root.fmtTime(root.pomodoroRemainingMs) + " left"
-        : "Pomodoro paused"
+        : (root.pausedMidSession ? "Pomodoro paused" : "Pomodoro ready")
 
     function fmtTime(ms) {
         var s = Math.floor(ms / 1000)
@@ -63,30 +70,6 @@ Item {
         elide: Text.ElideRight
     }
 
-    // One section = a column of the card. Label + separator + hero content at the top,
-    // the action button pinned to the bottom so all three columns share a baseline.
-    component Section: Item {
-        id: section
-        property string icon: ""
-        property string label: ""
-        default property alias content: sectionBody.data
-        property alias button: buttonLoader.sourceComponent
-        height: parent.height
-
-        Column {
-            id: sectionBody
-            width: parent.width
-            spacing: root.theme.spacing.rowGap
-            SectionLabel { theme: root.theme; icon: section.icon; text: section.label }
-            SectionSeparator { theme: root.theme }
-        }
-        Loader {
-            id: buttonLoader
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-        }
-    }
-
     Card {
         theme: root.theme
         anchors.fill: parent
@@ -100,30 +83,15 @@ Item {
 
             // ---- Pomodoro ----
             Section {
+                theme: root.theme
                 icon: "󱎫"; label: "POMODORO"
                 width: columns.columnWidth
 
-                // Phase pill — PanelHero.qml's `detail` pill shape, colored semantically.
-                Rectangle {
-                    implicitWidth: phaseText.implicitWidth + root.theme.space(10)
-                    implicitHeight: phaseText.implicitHeight + root.theme.space(4)
-                    color: "transparent"
-                    border.color: root.theme.withAlpha(root.working ? root.theme.red : root.theme.green, 0.4)
-                    border.width: root.theme.borderWidth
-                    radius: root.theme.cornerRadius
-                    Text {
-                        id: phaseText
-                        anchors.centerIn: parent
-                        text: root.working ? "WORK" : "BREAK"
-                        textFormat: Text.PlainText
-                        color: root.working ? root.theme.red : root.theme.green
-                        font.family: root.theme.font.family
-                        font.pixelSize: root.theme.font.caption
-                        font.bold: true
-                        font.letterSpacing: root.theme.font.heroCaptionSpacing
-                    }
+                HeroText {
+                    text: root.personalCareState.pomodoroRunning ? root.fmtTime(root.pomodoroRemainingMs)
+                        : root.pausedMidSession ? "Paused"
+                        : root.fmtTime(root.pomodoroPhaseDefaultMs)
                 }
-                HeroText { text: root.personalCareState.pomodoroRunning ? root.fmtTime(root.pomodoroRemainingMs) : "Paused" }
                 DetailText { text: "Completed today: " + root.personalCareState.todayPomodoroCount }
 
                 button: PanelButton {
@@ -133,12 +101,20 @@ Item {
                     text: root.personalCareState.pomodoroRunning ? "Pause" : "Start"
                     onActivated: root.personalCareState.togglePomodoro()
                 }
+                button2: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: "󰜉"
+                    text: "Reset"
+                    onActivated: root.personalCareState.resetPomodoro()
+                }
             }
 
             SectionSeparator { theme: root.theme; vertical: true }
 
             // ---- Water ----
             Section {
+                theme: root.theme
                 icon: "󰖌"; label: "WATER"
                 width: columns.columnWidth
 
@@ -158,11 +134,20 @@ Item {
 
             // ---- Stand ----
             Section {
+                theme: root.theme
                 icon: "󰖃"; label: "STAND"
                 width: columns.columnWidth
 
                 HeroText { text: root.fmtElapsed(root.personalCareState.lastStandAt) }
                 DetailText { text: "since last stand · reminds every " + Math.round(root.personalCareState.standIntervalMs / 60000) + " min" }
+
+                button: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: "󰜉"
+                    text: "Reset"
+                    onActivated: root.personalCareState.resetStand()
+                }
             }
         }
     }

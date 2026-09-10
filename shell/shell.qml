@@ -27,6 +27,9 @@ ShellRoot {
     property HidBridge hidBridge: HidBridge { daemonPath: root.daemonPath }
     property SystemStats systemStats: SystemStats {}
     property PersonalCareState personalCareState: PersonalCareState {}
+    property KnobLighting knobLighting: KnobLighting { hidBridge: root.hidBridge }
+    property MicState micState: MicState { hidBridge: root.hidBridge }
+    property ScreenBrightness screenBrightness: ScreenBrightness { hidBridge: root.hidBridge }
     property TouchRouter touchRouter: TouchRouter {}
     property Theme theme: Theme {}
     property KnobRouter knobRouter: KnobRouter {
@@ -76,6 +79,9 @@ ShellRoot {
             knobRouter: root.knobRouter
             systemStats: root.systemStats
             personalCareState: root.personalCareState
+            knobLighting: root.knobLighting
+            micState: root.micState
+            screenBrightness: root.screenBrightness
             hidBridge: root.hidBridge
             touchRouter: root.touchRouter
             theme: root.theme

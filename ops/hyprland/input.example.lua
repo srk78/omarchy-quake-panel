@@ -23,3 +23,34 @@
 -- name shown by `hyprctl devices` after restarting the daemon; this binding silently stops
 -- matching if the name has drifted.
 hl.device({ name = "omarchy-quake-panel-touch", output = "desc:BOE DK-QUAKE", transform = 0 })
+
+-- The panel's RAW touch hardware (vendor 0712:0010, "hotlotus" in
+-- ops/udev/99-omarchy-quake-panel.rules) auto-registers with the kernel as MORE than one
+-- input device. In addition to the vendor-specific touch usage page our own daemon reads
+-- directly via hidraw (bypassing the kernel's generic input subsystem entirely — see
+-- daemon/src/Aris68Connector.js), its HID report descriptor also exposes a
+-- standard-usage-page "Mouse" collection Linux's generic driver CAN parse as real
+-- relative pointer motion. Confirmed live via Hyprland's own libinput debug log ("New
+-- device hotlotus wcidtest Mouse", "device is a pointer") — entirely separate from and
+-- unrelated to "omarchy-quake-panel-touch" above (our own virtual re-emission). Nothing
+-- else in this project ever bound or disabled it, so its motion went wherever
+-- Hyprland's default pointer-output happens to be: the primary/laptop screen.
+--
+-- This was invisible with quick taps (a stray click on the main screen doing nothing
+-- noticeable) and only became obvious once the Settings page's brightness sliders
+-- introduced sustained touch-drags — reported live as "I can scroll the main screen by
+-- touching the device's screen." The bug was already there from day one of this
+-- project; dragging just finally made it visible. Disabled outright (not confined to
+-- the panel's output like the touch device above): this "Mouse" collection has no
+-- legitimate use for this project even on its own output — it would still jump/click a
+-- real cursor around in "desktop mode" (shell/Service.qml's mode toggle) if only
+-- confined rather than disabled.
+--
+-- Device names in `hl.device({name=...})` must be Hyprland's own NORMALIZED form
+-- (lowercase, hyphens for spaces — matching `hyprctl devices`' own listing), not the
+-- raw/human-readable name libinput's debug log prints — confirmed live: "hotlotus
+-- wcidtest Mouse" (the log's spelling) silently matched nothing; "hotlotus-wcidtest-mouse"
+-- (hyprctl's spelling) is what's actually needed. `hl.device({name=..., enabled=false})`
+-- is Omarchy's own first-party pattern for this, not something invented for this
+-- project — see /usr/share/omarchy/default/hypr/disabled-input-device.lua.
+hl.device({ name = "hotlotus-wcidtest-mouse", enabled = false })
