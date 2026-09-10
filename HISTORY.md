@@ -1147,7 +1147,44 @@ character. This is the first non-Nerd-Font icon anywhere in this project; if a f
 icon need hits the same "doesn't exist in Nerd Fonts" wall, checking for a plain
 Unicode emoji first is worth trying before reaching for an external image asset.
 
-## 28. Where things live (quick map)
+## 28. FOXY polish round two: page order, grayscale icon, no duplicate, a spacer (2026-09-10)
+
+Four follow-up requests after §27's rename:
+
+1. **Page order**: FOXY moved between Self Care and Settings (was last). `Ui/PageHost.qml`'s
+   `pages[]` array order and its `sourceComponent` switch, and `Services/KnobRouter.qml`'s
+   `modeTable[]` (per-page knob-press actions are index-keyed, so reordering pages means
+   reordering this table too, or the wrong page would get the wrong knob behavior) all
+   had to move together.
+2. **Grayscale fox icon**: the 🦊 emoji ignores `Text.color` entirely — confirmed live
+   (set to `theme.foreground`, rendered its natural orange regardless) — because a
+   color-emoji glyph carries baked-in color data (COLR/CBDT tables) that a plain text
+   color property has no power over. Fixed with `QtQuick.Effects`' `MultiEffect`
+   (`saturation: -1.0`) wrapping the icon `Text` (`layer.enabled: true` on the source,
+   `visible: false` so only the effect's output paints) — this operates on the actually
+   *rendered pixels*, so it works regardless of how the glyph itself draws itself, and
+   costs nothing on the three other pages' plain monochrome Nerd Font icons (desaturating
+   an already-gray image is a no-op). Confirmed `QtQuick.Effects` is genuinely present in
+   this Quickshell/Qt6 install (`/usr/lib/qt6/qml/QtQuick/Effects`) before relying on it —
+   this is the first use of a graphical-effects module anywhere in this project.
+3. **No more duplicate FOXY + fox icon on the page itself**: `Pages/PaPage.qml`'s own
+   `Section` had reused "🦊"/"FOXY" as its own header, on top of the identical pair
+   already in the shared page header (`Ui/PageHeader.qml`) — genuinely redundant, and
+   also an inconsistency with every other page's own convention (Personal Care's
+   sections say POMODORO/WATER/STAND, not "Self Care" three times; Settings says KNOB
+   COLOR/etc., not "Settings"). Replaced with a content-descriptive icon+label instead —
+   a message-bubble glyph + "CONVERSATION" — matching that established pattern.
+4. **A spacer between the page-name tabs and the clock**: `Ui/PageHeader.qml`'s
+   `trailing` Row applies its own `spacing` uniformly between every child already; added
+   a plain fixed-width `Item` between the page-indicator Row and the
+   continuous-dot/clock group so that gap reads as deliberately larger than the gap
+   between the dot and the clock itself, rather than one continuous evenly-spaced run.
+
+Verified live via screenshot: page order (SYSTEM · SELF CARE · FOXY · SETTINGS), the
+header's fox rendering in clean grayscale, the page body now reading "CONVERSATION"
+with no repeated fox/FOXY, and a visibly wider gap before the clock.
+
+## 29. Where things live (quick map)
 
 | Thing | Path |
 |---|---|

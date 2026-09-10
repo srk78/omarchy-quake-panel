@@ -60,9 +60,14 @@ Item {
         theme: root.theme
         anchors.fill: parent
 
+        // Content-descriptive label, not a repeat of the page title/icon — matching
+        // every other page's own section convention (Personal Care's POMODORO/WATER/
+        // STAND, Settings' KNOB COLOR/etc. never just repeat "Self Care"/"Settings"
+        // either). FOXY + the fox icon already live in the shared page header
+        // (Ui/PageHeader.qml) — showing them a second time here was redundant.
         Section {
             theme: root.theme
-            icon: "🦊"; label: "FOXY"
+            icon: "󰍩"; label: "CONVERSATION"
             anchors.fill: parent
             anchors.margins: root.theme.space(16)
 

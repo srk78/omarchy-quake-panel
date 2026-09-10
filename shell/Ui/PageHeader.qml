@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 
 // Page hero — Omarchy's Ui/PanelHero.qml: display-size glyph, bold title, uppercase
 // letter-spaced dim caption; on the trailing edge, the clock and a page indicator (the
@@ -20,6 +21,15 @@ Item {
     readonly property color dim: theme.secondaryForeground
     implicitHeight: Math.max(iconText.implicitHeight, labels.implicitHeight, trailing.implicitHeight)
 
+    // FOXY's icon is a real color emoji (see PageHost.qml's own comment on why), which
+    // plain Text.color has no effect on — a color-emoji glyph carries its own baked-in
+    // color table (COLR/CBDT) that overrides the text color property entirely,
+    // confirmed live (set to theme.foreground, rendered orange regardless). Desaturating
+    // via MultiEffect operates on the actually-rendered pixels instead, so it works
+    // regardless of how the glyph itself is painted — every other page's icon is a
+    // plain monochrome Nerd Font glyph already unaffected by this (saturation -1 on an
+    // already-gray image is a no-op), so this wrapping applies uniformly rather than
+    // needing an if-FOXY special case.
     Text {
         id: iconText
         text: root.icon
@@ -29,6 +39,13 @@ Item {
         font.pixelSize: root.theme.font.display
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
+        layer.enabled: true
+        visible: false
+    }
+    MultiEffect {
+        anchors.fill: iconText
+        source: iconText
+        saturation: -1.0
     }
 
     Column {
@@ -100,6 +117,12 @@ Item {
                 }
             }
         }
+
+        // A plain gap between the page tabs and the clock/dot group — Row's own
+        // `spacing` already puts 12px around every child uniformly, so this adds to
+        // that rather than replacing it, deliberately separating "where you are" from
+        // "what time it is" as two distinct clusters instead of one continuous run.
+        Item { width: root.theme.space(16); height: 1 }
 
         // Deliberately subtle, per the brief: a small dim dot, not a bright badge — you
         // should be able to notice it if you look, not have it fight for attention on a

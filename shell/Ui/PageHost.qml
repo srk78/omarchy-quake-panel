@@ -30,8 +30,8 @@ Item {
     readonly property var pages: [
         { icon: "󰓅", title: "System" },
         { icon: "󰗶", title: "Self Care" },
-        { icon: "󰒓", title: "Settings" },
         { icon: "🦊", title: "FOXY" },
+        { icon: "󰒓", title: "Settings" },
     ]
     readonly property var pageNames: root.pages.map(function (p) { return p.title })
     readonly property int pageIndex: Math.max(0, Math.min(root.pages.length - 1, root.knobRouter.currentPageIndex))
@@ -75,8 +75,8 @@ Item {
             switch (root.knobRouter.currentPageIndex) {
                 case 0: return dashboardComp
                 case 1: return careComp
-                case 2: return settingsComp
-                case 3: return paComp
+                case 2: return paComp
+                case 3: return settingsComp
                 default: return dashboardComp
             }
         }
