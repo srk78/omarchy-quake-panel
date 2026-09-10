@@ -129,10 +129,15 @@ built from:
 - **`Pages/PaPage.qml`** — "Foxy", a voice agent: local speech-to-text (Voxtype) piped to
   a real tool-using `claude -p` agent (`daemon/src/paBridge.js` + its MCP server,
   `daemon/src/paTools/server.js`), one tool so far (starting the Pomodoro), replies
-  spoken aloud via Piper. Manual push-to-talk only for now (knob press or the on-screen
-  button toggles listening) — see `HISTORY.md` §22/§24 for the design, what's verified,
-  and two non-obvious `claude -p` flags (`--system-prompt`, `--allowedTools`) needed to
-  make tool-calling actually work non-interactively.
+  spoken aloud via Piper. Two ways to talk to it: manual push-to-talk (knob press or the
+  on-screen `Talk` button toggles listening), or continuous "Hey Jarvis" wake-word mode
+  (the `Listen for wake word` button — a small pulsing dot in the shared page header
+  shows it's armed, on every page, not just this one). "Hey Jarvis" is a deliberate
+  stand-in for "Hey Foxy," which needs custom wake-word training (Google Colab — a
+  separate manual step, see `HISTORY.md` §26). See `HISTORY.md` §22/§24/§26 for the full
+  design, what's verified, and the non-obvious gotchas (`claude -p` needs
+  `--system-prompt` + `--allowedTools` to actually call tools non-interactively; a
+  wake-word listener orphan can survive a shell restart and needs `SIGKILL`).
 
   Setup this page needs beyond `npm install` in `daemon/`:
   - **Voxtype** (`voxtype.service`) already running, with a PA-scoped config at
@@ -144,6 +149,9 @@ built from:
     en_US-lessac-medium --download-dir ~/.local/share/piper/voices`. A different
     machine's speaker sink name (`pactl list short sinks`) goes in
     `OQP_PA_SPEAKER_SINK` if it differs from `daemon/src/paBridge.js`'s default.
+  - **openWakeWord** — `pip install --user openwakeword sounddevice` (pure Python +
+    ONNX, no compiled-extension packaging needed the way Piper has); its pretrained
+    "Hey Jarvis" model ships inside the package itself, no separate download step.
 - **`Ui/`** — shared components consumed by both pages: `Card`, `SectionLabel`,
   `SectionSeparator`, `PanelButton` (a touch button that registers itself with
   `TouchRouter`), `PageHeader` (the hero title/status/clock/page-indicator bar),

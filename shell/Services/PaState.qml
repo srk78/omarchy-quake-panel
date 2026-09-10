@@ -2,15 +2,18 @@ import QtQuick
 
 // Conversation state for the PA ("Foxy") page — the QML-side domain object over
 // PaBridge.qml's raw daemon connection, same relationship KnobLighting.qml/MicState.qml
-// have to HidBridge.qml. Phase A: manual push-to-talk only (no continuous/wake-word mode
-// yet — see HISTORY.md's brainstorm for the full plan), text reply only (no TTS yet).
+// have to HidBridge.qml. Phases A-C done (push-to-talk, spoken replies, continuous
+// "wake word" mode) — see HISTORY.md.
 QtObject {
     id: root
     required property var paBridge
 
-    // "idle" | "listening" | "transcribing" | "thinking"
+    // "idle" | "listening" | "transcribing" | "thinking" | "speaking"
     property string status: "idle"
     readonly property bool busy: root.status !== "idle"
+    // Whether the daemon's wake-word listener is armed — read by Ui/PageHeader.qml's
+    // pulsing dot (shown on every page, not just this one) via PageHost.qml.
+    property bool continuousMode: false
 
     // Last exchange only, not a scrolling history — the panel's own screen is a short,
     // wide strip (see PaPage.qml), and each turn already carries its own memory via the
@@ -43,12 +46,27 @@ QtObject {
     function resetSession() {
         root.paBridge.sendCommand({ cmd: "resetSession" })
     }
+    function setContinuousMode(on) {
+        root.paBridge.sendCommand({ cmd: on ? "startContinuous" : "stopContinuous" })
+    }
+    function toggleContinuousMode() { root.setContinuousMode(!root.continuousMode) }
 
     // Bare Connections {} would fail here — see KnobLighting.qml's own comment on why
     // QtObject children need an explicit property name.
     property Connections _bridgeConn: Connections {
         target: root.paBridge
-        function onStateEvent(state) { if (state && state.status) root.status = state.status }
+        function onStateEvent(state) {
+            if (!state) return
+            // A fresh "listening" is the one status every turn passes through, however
+            // it started (button, knob, or a wake word) — clearing any stale error here,
+            // not just in beginTurn(), means a wake-triggered turn also starts with a
+            // clean slate instead of leaving a transient error from moments ago (e.g. a
+            // one-off mic handoff race the listener already recovered from on its own)
+            // sitting on screen looking like a still-current problem.
+            if (state.status === "listening") root.lastError = ""
+            if (state.status) root.status = state.status
+            if (state.continuous !== undefined) root.continuousMode = state.continuous
+        }
         function onTranscript(text) { root.lastHeard = text }
         function onReply(text) { root.lastReply = text }
         function onDaemonError(message) { root.lastError = message }

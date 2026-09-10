@@ -54,6 +54,7 @@ Item {
         clock: root.systemStats.clockText
         pageNames: root.pageNames
         pageIndex: root.pageIndex
+        continuousListening: root.paState.continuousMode
     }
 
     Loader {

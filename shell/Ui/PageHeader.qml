@@ -12,6 +12,10 @@ Item {
     property string clock: ""
     property var pageNames: []
     property int pageIndex: 0
+    // PA's continuous "wake word" mode (Services/PaState.qml) — shown here, not on
+    // PaPage.qml itself, specifically because it keeps listening no matter which page
+    // is on screen; this is the one piece of chrome every page already shares.
+    property bool continuousListening: false
 
     readonly property color dim: theme.secondaryForeground
     implicitHeight: Math.max(iconText.implicitHeight, labels.implicitHeight, trailing.implicitHeight)
@@ -94,6 +98,25 @@ Item {
                         font.letterSpacing: root.theme.font.heroCaptionSpacing
                     }
                 }
+            }
+        }
+
+        // Deliberately subtle, per the brief: a small dim dot, not a bright badge — you
+        // should be able to notice it if you look, not have it fight for attention on a
+        // panel that's mostly meant to be glanced at.
+        Rectangle {
+            id: continuousDot
+            visible: root.continuousListening
+            width: root.theme.space(7); height: width
+            radius: width / 2
+            color: root.dim
+            anchors.verticalCenter: parent.verticalCenter
+
+            SequentialAnimation on opacity {
+                running: continuousDot.visible
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 0.25; duration: 900; easing.type: Easing.InOutQuad }
+                NumberAnimation { from: 0.25; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
             }
         }
 

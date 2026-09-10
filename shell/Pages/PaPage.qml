@@ -1,12 +1,16 @@
 import QtQuick
 import "../Ui"
 
-// Page 4 — PA ("Foxy"), the voice agent. Phases A+B of the design in HISTORY.md: manual
-// push-to-talk only (knob press or the on-screen button toggles listening on/off — see
+// Page 4 — PA ("Foxy"), the voice agent. Phases A-C of the design in HISTORY.md: manual
+// push-to-talk (knob press or the on-screen Talk button toggles listening on/off — see
 // Services/PaState.qml's togglePushToTalk()), one real tool (starting the Pomodoro,
-// Services/PersonalCareState.qml's startPomodoro()), and a spoken reply (Piper, driven
-// entirely from daemon/src/paBridge.js — this page just shows the "speaking" status,
-// it doesn't touch audio itself). No continuous "Hey Foxy" mode yet (Phase C).
+// Services/PersonalCareState.qml's startPomodoro()), a spoken reply (Piper, driven
+// entirely from daemon/src/paBridge.js — this page just shows the "speaking" status, it
+// doesn't touch audio itself), and continuous "wake word" mode (Listen button below —
+// says "Hey Jarvis", the interim stock phrase for "Hey Foxy", see HISTORY.md for why).
+// The continuous-mode indicator itself lives in Ui/PageHeader.qml, not here — it needs
+// to show on every page, not just this one, since continuous mode keeps listening no
+// matter which page is on screen.
 //
 // Single full-width Section (not the personal-care/settings pattern of several side by
 // side) — there's one thing on this page, a conversation, not several independent
@@ -33,10 +37,19 @@ Item {
         return "Talk"
     }
 
+    // maximumLineCount + elide caps how tall a reply can grow — Claude's replies have no
+    // natural length limit, and without this a long one visually overlapped the
+    // bottom-anchored button row (Section.qml's content Column sizes to fit its
+    // children and has no idea where the button row sits — see HISTORY.md's Phase C
+    // notes). Same fixed-vertical-budget lesson as every other page on this panel, just
+    // the first one where the content itself is unbounded rather than a couple of known
+    // short lines.
     component Line: Text {
         textFormat: Text.PlainText
         width: parent.width
         wrapMode: Text.WordWrap
+        elide: Text.ElideRight
+        maximumLineCount: 4
         color: root.theme.foreground
         font.family: root.theme.font.family
         font.pixelSize: root.theme.font.subtitle
@@ -84,6 +97,13 @@ Item {
                 icon: root.buttonIcon
                 text: root.buttonText
                 onActivated: root.paState.togglePushToTalk()
+            }
+            button2: PanelButton {
+                theme: root.theme
+                touchRouter: root.touchRouter
+                icon: root.paState.continuousMode ? "󰋋" : "󰍭"
+                text: root.paState.continuousMode ? "Listening for “Hey Jarvis”" : "Listen for wake word"
+                onActivated: root.paState.toggleContinuousMode()
             }
         }
     }

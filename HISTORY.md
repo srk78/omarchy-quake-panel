@@ -1021,7 +1021,111 @@ QML errors. **Not yet verified**: actually hearing it — this session can run p
 and inspect their output/exit codes, but has no ears. Ask on next contact whether "Hey
 there! What can I help with?" was audible from the laptop speaker.
 
-## 25. Where things live (quick map)
+## 26. "Hey Jarvis" — Phase C: continuous wake-word mode (2026-09-10)
+
+Phase C of the PA design (§22): a "Listen for wake word" button (`Pages/PaPage.qml`)
+arms continuous listening, shown as a small pulsing dot in `Ui/PageHeader.qml` — the one
+piece of chrome shared by every page, since continuous mode keeps listening no matter
+which page is on screen. Verified with **real acoustic loopback**, not a synthetic
+event injection: a "Hey Jarvis" clip played through the laptop's own speaker, picked up
+by the panel's mic, correctly triggered a real turn through the actual running plugin —
+repeated several times across this section's debugging, including one full cycle that
+correctly called `start_pomodoro` for real.
+
+**The wake word is "Hey Jarvis," not "Hey Foxy."** openWakeWord's pretrained models are
+for specific stock phrases (alexa, hey mycroft, hey jarvis, hey rhasspy); "Hey Foxy"
+needs custom training, and the supported path for that is Google's Colab (a whole
+separate manual undertaking — a Google account, a browser session, real wall-clock
+time). Deliberately deferred rather than blocking Phase C's actual architecture on it —
+"Foxy" stays the spoken persona regardless of which phrase wakes it, and swapping in a
+real custom model later is a one-line change to `wakeword.py`'s `MODEL_PATH`/`MODEL_KEY`,
+not a redesign.
+
+### Architecture: wake-word listener as a one-shot handoff, not a continuous VAD
+
+`daemon/src/paTools/wakeword.py` (Python — openWakeWord is Python/ONNX) does exactly one
+job and exits: spot the phrase on the panel's mic, print `{"event":"wake"}`, done.
+`paBridge.js` relaunches it after every turn finishes, if continuous mode is still on.
+This shape — rather than a long-running listener that also handles the ongoing
+turn — exists specifically so the listener and Voxtype's own recording are **never open
+on the same device at the same time**, sidestepping any question of whether this
+machine's ALSA setup actually shares capture across processes (`dsnoop`) or not.
+
+**A wake-triggered turn records for a fixed window (`CONTINUOUS_TURN_MS`, 6s default),
+not until silence is detected.** There's no manual "release" the way the button/knob
+gesture has one. Checked Voxtype's own `config schema` for a silence/VAD auto-stop
+option before building this — it only has a hard `max_duration_secs` safety cap
+(default 60s) and a post-hoc silence-only-recording filter, nothing that shortens a
+recording early. Real VAD-based endpointing (reusing the same mic stream the listener
+already has open to also judge when the user stopped talking) was considered and
+rejected for v1: it re-introduces exactly the concurrent-mic-access question the
+one-shot handoff design exists to avoid. The trade-off is honest, not hidden: a short
+request leaves a little dead air before Voxtype stops recording; a long one could
+theoretically get cut off. Worth revisiting if 6s proves wrong in practice.
+
+### Two real bugs found via extensive live testing, not from reading the code
+
+1. **A leftover `wakeword.py` process survives `omarchy-restart-shell` as an orphan.**
+   Confirmed by directly inspecting process parentage (`ps -o pid,ppid,lstart`): after a
+   restart, a still-running listener's PPID pointed at a node process that no longer
+   existed under that PID — a straggler from a previous daemon generation, still
+   holding the mic, fighting the new daemon's own fresh listener for the same device.
+   This is what caused every intermittent `Invalid sample rate [PaErrorCode -9997]`
+   error seen while building this feature — not really a "handoff timing" race at all
+   (though `MIC_HANDOFF_DELAY_MS`/the retry logic are still worth keeping as real
+   defense-in-depth for genuine timing races). **Root cause**: `omarchy-restart-shell`
+   killing the old quickshell/daemon tree does not reliably cascade to this daemon's own
+   *grandchild* processes. **Fixed** with a startup-time cleanup in `paBridge.js`:
+   `pkill -9 -f <the exact wakeword.py path>` before doing anything else, every time the
+   daemon boots, so a leftover from any previous generation can never linger into a new
+   one. Confirmed via direct process inspection (no orphan survives a restart anymore).
+2. **`SIGTERM` alone isn't reliable against this specific process.** Both the startup
+   cleanup and `stopListener()` use `SIGKILL`, not `SIGTERM` — confirmed live that a
+   `pkill`/`.kill()` without `-9` didn't reliably stop an instance blocked in a
+   PortAudio/ALSA wait, which likely simply doesn't notice `SIGTERM` until it exits that
+   call on its own. Nothing in this script has state worth flushing on the way out, so
+   an abrupt kill costs nothing.
+
+### One layout bug, also found live
+
+The conversation `Column` (`PaPage.qml`) has no natural height limit, and Claude's
+replies have no natural length limit — a longer reply visually overlapped the
+bottom-anchored button row (`Section.qml`'s content area has no idea where the button
+row sits; it just sizes to fit its children). Same fixed-vertical-budget lesson this
+project has hit before on other pages (§11, §19), just the first page where the content
+itself is unbounded rather than a couple of known-short lines. Fixed with
+`maximumLineCount: 4` + `elide: Text.ElideRight` on the shared `Line` component, caught
+and confirmed fixed via a live screenshot with a genuinely long reply.
+
+### A UX polish found live: stale errors
+
+A transient error (e.g., one of the mic-handoff races above, before the orphan-process
+root cause was found and fixed) stayed on screen indefinitely — nothing ever cleared
+`PaState.lastError` once the system had actually recovered on its own, so a
+long-resolved problem could still look like a current one. Fixed by clearing it on
+every fresh `"listening"` status transition, not just `beginTurn()`'s manual-path
+clearing — a wake-triggered turn goes through the same status transition, so it gets
+the same clean slate.
+
+### On the testing methodology itself
+
+Every acoustic test in this section used **Piper-synthesized speech**, not a real human
+voice — a deliberate choice (no human available to speak during automated testing), and
+it worked well for the wake word itself (openWakeWord's own models are trained on
+100% synthetic TTS data, so this is a legitimate signal, not a toy test) but produced
+some genuinely funny whisper mis-transcriptions of the follow-up command ("start the
+pomodoro" → "start the motor wheel" → "start to promote the room") — TTS diction
+artifacts, not representative of real speech, but still a good incidental test of the
+system prompt's "ask a brief clarifying question instead of guessing" instruction:
+Claude asked sensible clarifying questions every time rather than mis-firing the
+`start_pomodoro` tool on a garbled transcript, exactly the behavior wanted. **Real human
+speech was already confirmed working** for the manual push-to-talk path back in Phase
+A/B (the user's own "I tried it, it is working" after this session's Phase A+B work) —
+continuous mode's wake-word *detection* and *turn mechanics* are now proven for real,
+but nobody has yet said "Hey Jarvis" out loud and spoken a real follow-up command in one
+breath.
+
+## 27. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1035,6 +1139,7 @@ there! What can I help with?" was audible from the laptop speaker.
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
 | PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
 | PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
+| PA continuous "wake word" mode (§26) | `daemon/src/paTools/wakeword.py`, `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |

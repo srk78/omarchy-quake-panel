@@ -3,21 +3,30 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
-## PA voice agent — Phases A+B done (pending a real finger/voice/ear), C–D not started
+## PA voice agent — Phases A–C done, D not started
 
-See `HISTORY.md` §22 (Phase A: push-to-talk, one tool, text reply) and §24 (Phase B:
-spoken replies via Piper) for the full build, and the `claude -p` gotchas
-(`--system-prompt` not `--append-system-prompt`; `--allowedTools` needed for
-non-interactive tool permission) that took real testing to find.
+**Phases A+B confirmed working by the user's own hand**: "I tried it, it is working.
+Two way communication is working and it starts the Pomodoro." Manual push-to-talk,
+real speech in, a real spoken reply out, the `start_pomodoro` tool actually firing.
 
-- **Physically press the on-screen Talk button (or the knob on the PA page), speak a
-  real request, and confirm you actually HEAR the reply** — this session verified every
-  link in the chain by process/file inspection (Voxtype capturing genuine audio through
-  the panel's mic, the daemon's `startTurn`/`endTurn`/`claude -p`/`speak()` cycle,
-  `start_pomodoro` flipping real panel state, Piper producing a correctly-shaped WAV,
-  `paplay` exiting cleanly against the real speaker sink), but nobody has done the
-  actual physical gesture, spoken command, or listened for the reply yet. This is the
-  one remaining gap between "built and daemon-tested" and "actually done."
+See `HISTORY.md` §22 (Phase A: push-to-talk, one tool, text reply), §24 (Phase B: spoken
+replies via Piper), and §26 (Phase C: continuous "Hey Jarvis" mode) for the full build.
+Recurring gotchas worth not rediscovering: `claude -p` needs `--system-prompt` (not
+`--append-system-prompt`) and `--allowedTools` for non-interactive tool permission
+(§22); a wake-word listener orphan can survive `omarchy-restart-shell` and needs
+`SIGKILL`, not `SIGTERM`, to reliably stop (§26).
+
+- **Say "Hey Jarvis" out loud (a real human voice, not synthesized speech) and speak a
+  real follow-up command in one breath** — Phase C's wake-word detection and turn
+  mechanics were verified with real acoustic loopback (a speaker playing a clip, picked
+  up by the actual mic) and are confirmed working end-to-end including a real
+  `start_pomodoro` call, but every test this session used Piper-synthesized speech for
+  the follow-up command specifically (no human available during automated testing) —
+  see `HISTORY.md` §26 for why the resulting mis-transcriptions ("start the motor
+  wheel", "start to promote the room") are a TTS-diction artifact, not a real concern,
+  but real human speech through the *wake-triggered* path specifically hasn't been
+  tried yet (only through the manual push-to-talk path, which the user already
+  confirmed).
 - **Confirm `piper-tts` actually installed from AUR and remove the temporary
   `~/.local/bin/piper-tts` shim** (a `pip install --user piper-tts` symlinked to that
   name, used to verify the pipeline while the AUR package's sudo step was pending) —
@@ -25,16 +34,24 @@ non-interactive tool permission) that took real testing to find.
   if it still shows `~/.local/bin/piper-tts`, either the AUR install didn't finish or
   `$PATH` ordering needs a second look. Removing the shim isn't required for anything to
   keep working (`/usr/bin` precedes `~/.local/bin` on `$PATH` here), but it's stale
-  clutter once the real package exists.
+  clutter once the real package exists. `openwakeword`/`sounddevice` are also currently
+  only `pip install --user`-installed, not packaged system-wide — fine as-is (both are
+  pure-Python-plus-ONNX, no compiled-extension fragility like Piper's build), just
+  worth knowing where they live if this ever moves to a different user/machine.
 - **Confirm the mic mute toggle actually gates the C-Media device**, not just that the
   device works — toggle `MicState`'s on/off (Settings page) and watch
   `pactl list sources` / a capture-level meter while it's off, to be sure `setMic`
   really controls this same audio path and not something unrelated.
-- **Phase C — continuous "Hey Foxy" mode**: openWakeWord for the wake word, a pulsing
-  dot in `Ui/PageHeader.qml` (shared across all pages, not just PA), and — flagged as a
-  genuinely open question in the plan, not yet resolved — how a continuous-mode
-  recording ends without a manual release (Voxtype's own silence/VAD behavior wasn't
-  checked this session; look at `voxtype config schema` before building this).
+- **A real "Hey Foxy" wake word still needs Google Colab training** (see `HISTORY.md`
+  §26) — "Hey Jarvis" is a deliberate stand-in, not the final phrase. This needs the
+  user to actually go run openWakeWord's training notebook (a Google account, a browser
+  session, real time) whenever they want the real phrase; swapping the trained model in
+  afterward is a one-line change in `wakeword.py`.
+- **The fixed 6-second recording window for wake-triggered turns is untuned** — see
+  `HISTORY.md` §26 for why it's fixed-duration rather than silence-detected. Worth
+  adjusting `CONTINUOUS_TURN_MS` (env-overridable) once real usage shows whether 6s is
+  too short (cutting off longer requests) or too long (awkward dead air after a short
+  one).
 - **Phase D — Home Assistant control**: needs a long-lived access token generated by
   hand in HA's own UI first (nothing here can script that step), then the
   propose/confirm MCP tool pair from the brainstormed plan.
@@ -43,8 +60,8 @@ non-interactive tool permission) that took real testing to find.
   end-to-end (`claude-haiku-4-5` was already chosen specifically to keep this down
   versus the default Sonnet), and Piper synthesis adds its own real time on top (a ~2s
   reply took a noticeable moment to render before `paplay` even started). Worth keeping
-  an eye on once this gets used for real, especially once continuous mode (Phase C) can
-  trigger turns without a deliberate button press.
+  an eye on now that continuous mode (Phase C) can trigger turns without a deliberate
+  button press.
 - **`ALLOWED_TOOLS` in `daemon/src/paBridge.js` needs a new entry every time a new MCP
   tool is added** (Phase D's Home Assistant tools especially) — easy to forget, and the
   failure mode (a silent `permission_denials` entry, the model apologizing that it
