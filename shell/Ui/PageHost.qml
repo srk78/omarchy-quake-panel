@@ -20,12 +20,18 @@ Item {
     required property var theme
 
     // Glyphs are Nerd Font (Material Design set) codepoints, rendered through the same
-    // fontconfig alias Omarchy uses — see Services/Theme.qml.
+    // fontconfig alias Omarchy uses — see Services/Theme.qml. FOXY is the one
+    // exception: no Nerd Font set (checked directly in the font's own glyph names) has
+    // a generic fox icon, only the trademarked Firefox browser logo — so this is a
+    // genuine Unicode emoji (🦊, U+1F98A) instead, which Qt's own font-fallback renders
+    // in full color via Noto Color Emoji (already installed) despite the surrounding
+    // theme font being a plain monospace with no color-emoji glyphs of its own —
+    // confirmed live, no special handling needed beyond just using the character.
     readonly property var pages: [
         { icon: "󰓅", title: "System" },
         { icon: "󰗶", title: "Self Care" },
         { icon: "󰒓", title: "Settings" },
-        { icon: "󰊠", title: "PA" },
+        { icon: "🦊", title: "FOXY" },
     ]
     readonly property var pageNames: root.pages.map(function (p) { return p.title })
     readonly property int pageIndex: Math.max(0, Math.min(root.pages.length - 1, root.knobRouter.currentPageIndex))

@@ -1125,7 +1125,29 @@ continuous mode's wake-word *detection* and *turn mechanics* are now proven for 
 but nobody has yet said "Hey Jarvis" out loud and spoken a real follow-up command in one
 breath.
 
-## 27. Where things live (quick map)
+## 27. FOXY: the page rename, and a real fox icon (2026-09-10)
+
+Three small polish requests after Phase C: rename the page from "PA" to "FOXY", replace
+its ghost icon with "a cool fox icon," and reword the continuous-mode button away from
+naming "Hey Jarvis" directly (`Ui/PageHost.qml`'s `pages[]` title, and
+`Pages/PaPage.qml`'s section icon + `button2` text).
+
+**No Nerd Font icon set has a generic fox** — checked directly against the font's own
+glyph names (`fontTools`' `getGlyphOrder()`), not guessed from a codepoint name the way
+earlier icon mistakes happened (§20). The only "fox"-named glyphs anywhere are
+`seti-firefox`/`dev-firefox`/`fa-firefox`/`md-firefox` — the trademarked Firefox browser
+logo, which would misleadingly brand this page as browser-related. Asked the user how
+to handle this rather than guessing; while waiting, found a better answer than any of
+the offered options: **🦊 (U+1F98A) is a real Unicode emoji**, already covered by Noto
+Color Emoji (already installed on this machine — `fc-list | grep -i emoji`). Verified
+live that Qt's own font-fallback renders it in full color inside this app's existing
+`Text`-based icon slots, despite the surrounding theme font being a plain monospace
+with zero color-emoji glyphs of its own — no architecture change needed, just using the
+character. This is the first non-Nerd-Font icon anywhere in this project; if a future
+icon need hits the same "doesn't exist in Nerd Fonts" wall, checking for a plain
+Unicode emoji first is worth trying before reaching for an external image asset.
+
+## 28. Where things live (quick map)
 
 | Thing | Path |
 |---|---|

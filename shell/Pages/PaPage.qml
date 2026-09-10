@@ -1,16 +1,17 @@
 import QtQuick
 import "../Ui"
 
-// Page 4 — PA ("Foxy"), the voice agent. Phases A-C of the design in HISTORY.md: manual
+// Page 4 — FOXY, the voice agent. Phases A-C of the design in HISTORY.md: manual
 // push-to-talk (knob press or the on-screen Talk button toggles listening on/off — see
 // Services/PaState.qml's togglePushToTalk()), one real tool (starting the Pomodoro,
 // Services/PersonalCareState.qml's startPomodoro()), a spoken reply (Piper, driven
 // entirely from daemon/src/paBridge.js — this page just shows the "speaking" status, it
-// doesn't touch audio itself), and continuous "wake word" mode (Listen button below —
-// says "Hey Jarvis", the interim stock phrase for "Hey Foxy", see HISTORY.md for why).
-// The continuous-mode indicator itself lives in Ui/PageHeader.qml, not here — it needs
-// to show on every page, not just this one, since continuous mode keeps listening no
-// matter which page is on screen.
+// doesn't touch audio itself), and continuous mode (the Continuous Mode button below —
+// listens for "Hey Jarvis", the interim stock phrase for "Hey Foxy", see HISTORY.md for
+// why; the button itself doesn't name the phrase, just the on/off state, since that's
+// the part a user actually needs to act on). The continuous-mode indicator itself lives
+// in Ui/PageHeader.qml, not here — it needs to show on every page, not just this one,
+// since continuous mode keeps listening no matter which page is on screen.
 //
 // Single full-width Section (not the personal-care/settings pattern of several side by
 // side) — there's one thing on this page, a conversation, not several independent
@@ -61,7 +62,7 @@ Item {
 
         Section {
             theme: root.theme
-            icon: "󰊠"; label: "FOXY"
+            icon: "🦊"; label: "FOXY"
             anchors.fill: parent
             anchors.margins: root.theme.space(16)
 
@@ -102,7 +103,7 @@ Item {
                 theme: root.theme
                 touchRouter: root.touchRouter
                 icon: root.paState.continuousMode ? "󰋋" : "󰍭"
-                text: root.paState.continuousMode ? "Listening for “Hey Jarvis”" : "Listen for wake word"
+                text: root.paState.continuousMode ? "Continuous Mode: On" : "Continuous Mode: Off"
                 onActivated: root.paState.toggleContinuousMode()
             }
         }
