@@ -172,6 +172,13 @@ QtObject {
         else root._startPomodoro()
     }
 
+    // Idempotent start for callers that mean "start it" specifically, not "flip it" —
+    // the PA's start_pomodoro tool (Service.qml's IpcHandler) is the first such caller.
+    // togglePomodoro() would wrongly PAUSE an already-running session for that caller.
+    function startPomodoro() {
+        if (!root.pomodoroRunning) root._startPomodoro()
+    }
+
     function _startPomodoro() {
         root._rollOverIfNeeded()
         var now = Date.now()

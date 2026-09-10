@@ -15,6 +15,7 @@ Item {
     required property var micState
     required property var screenBrightness
     required property var hidBridge
+    required property var paState
     required property var touchRouter
     required property var theme
 
@@ -24,6 +25,7 @@ Item {
         { icon: "󰓅", title: "System" },
         { icon: "󰗶", title: "Self Care" },
         { icon: "󰒓", title: "Settings" },
+        { icon: "󰊠", title: "PA" },
     ]
     readonly property var pageNames: root.pages.map(function (p) { return p.title })
     readonly property int pageIndex: Math.max(0, Math.min(root.pages.length - 1, root.knobRouter.currentPageIndex))
@@ -67,6 +69,7 @@ Item {
                 case 0: return dashboardComp
                 case 1: return careComp
                 case 2: return settingsComp
+                case 3: return paComp
                 default: return dashboardComp
             }
         }
@@ -75,4 +78,5 @@ Item {
     Component { id: dashboardComp; DashboardPage { systemStats: root.systemStats; theme: root.theme } }
     Component { id: careComp; PersonalCarePage { personalCareState: root.personalCareState; touchRouter: root.touchRouter; theme: root.theme } }
     Component { id: settingsComp; SettingsPage { knobLighting: root.knobLighting; micState: root.micState; screenBrightness: root.screenBrightness; touchRouter: root.touchRouter; theme: root.theme } }
+    Component { id: paComp; PaPage { paState: root.paState; touchRouter: root.touchRouter; theme: root.theme } }
 }

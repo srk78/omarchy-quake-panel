@@ -872,7 +872,112 @@ the popup open/close and row-click-to-`setMode()` wiring rests on `PopupCard`/
 the click handler, not a live click. Should be checked with an actual mouse at some
 point, though risk is low since nothing here is bespoke touch code.
 
-## 21. Where things live (quick map)
+## 22. A voice agent, "Foxy" — Phase A: manual push-to-talk + one real tool (2026-09-10)
+
+A fourth page, PA, where a real AI agent lives: local speech-to-text (Voxtype, already
+running as `voxtype.service`), an actual tool-using agent (`claude -p`, not a plain-text
+chatbot), and one real action wired all the way through to the panel's own state. This
+is Phase A of a larger brainstormed plan (continuous "Hey Foxy" wake-word mode, spoken
+replies via Piper, Home Assistant control — all later phases, deliberately deferred so
+this first, riskiest slice — does the whole pipeline even work? — could be proven on
+real hardware before building anything on top of it.
+
+**Architecture**: a second, independent daemon, `daemon/src/paBridge.js`, kept separate
+from `bridge.js`/`HidBridge.qml` on purpose — an LLM CLI call can take several seconds,
+and this heavier, more experimental piece must never be able to block or destabilize the
+HID/touch daemon everything else depends on. `Services/PaBridge.qml` wraps it exactly
+like `HidBridge.qml` wraps the other one (same JSON-lines stdout / JSON-command stdin
+shape); `Services/PaState.qml` is the domain object over it (status, last-heard,
+last-reply), same relationship `KnobLighting.qml`/`MicState.qml` have to `HidBridge`.
+
+**Voxtype integration** uses its scriptable, file-based path rather than its normal
+type-into-focused-window dictation behavior — no keyboard-injection interception needed:
+`voxtype record start --file=<path>` writes the transcript to a plain text file instead
+of typing it, and `voxtype record stop --wait --json --timeout 20` blocks until
+transcription is final. A dedicated Voxtype config, `~/.config/voxtype/pa.toml` (see
+`ops/voxtype/pa.example.toml`), pins the input device explicitly rather than trusting
+"default" — see the mic-hardware finding below for what it's pinned to.
+
+**The mic hardware theory from the brainstorm was confirmed live**, and better than
+"confirmed" — actually used successfully for a real transcription. `voxtype info
+devices` (ALSA-level, not PipeWire's naming) resolved the panel's own mic to
+`sysdefault:CARD=Device` — card 0 in `/proc/asound/cards`, the same
+"C-Media Electronics Inc. USB PnP Audio Device" `lsusb -t` had already shown sitting
+behind the same internal hub as the panel's own vendor touch/HID device. Pinned that in
+`pa.toml` and ran a real `startTurn`/`endTurn` cycle through the actual daemon: it
+genuinely captured live audio through it (a few seconds of room tone transcribed as
+"you" — an expected whisper hallucination on near-silence, not a bug) and produced a
+real, in-character reply. The panel's mic is a real, working input device for this
+feature, not merely a plausible theory.
+
+**Two things had to be discovered the hard way to make `claude -p` actually call the
+tool, both confirmed by testing against the real MCP server and reading source, not
+guessed from docs**:
+
+1. **`--append-system-prompt` isn't enough for a real persona.** It only ADDS to Claude
+   Code's own default system prompt ("you are Claude Code, a software engineering
+   assistant"), it doesn't replace it. A model told to be "Foxy" via append still
+   introduced itself as a coding assistant when asked to start a pomodoro, and reached
+   for its own `Bash` tool to fake one with `sleep 1500 && notify-send` instead of
+   calling the real `start_pomodoro` tool that was sitting right there — confirmed live,
+   the exact failure the confirm-before-acting design in the brainstorm was worried
+   about, just from the *wrong* tool this time, not a missing confirmation. Fixed by
+   `--system-prompt` (a full replacement) instead — worked immediately.
+2. **A non-interactive `-p` call still runs Claude Code's normal permission system, and
+   there's no human to click "allow."** Even with the persona fixed and only the MCP
+   tool exposed, the very first real call came back as `permission_denials:
+   [{"tool_name":"mcp__quake-panel__start_pomodoro", ...}]` — the model tried to call
+   the right tool and was blocked by the same approval gate an interactive session would
+   show a dialog for. Fixed with `--allowedTools mcp__quake-panel__start_pomodoro`
+   (confirmed live: MCP tool names are qualified as `mcp__<serverName>__<toolName>`,
+   matching the server name in `--mcp-config`, not documented anywhere obvious — found
+   by reading the `permission_denials` field's own `tool_name`). `paBridge.js` keeps
+   this as a small `ALLOWED_TOOLS` array specifically so later phases add to it rather
+   than re-discovering this.
+
+Also worth remembering: **running `claude -p` FROM WITHIN an active Claude Code session
+inherits that session's own `CLAUDE_CODE_*` environment and reflects back its outer
+tool list** — several early manual tests done this way looked broken or contradictory
+(a fresh `-p` call claiming access to `ListAgents`/`CronCreate`/etc., or claiming zero
+tools) purely because of this nesting artifact, not real Claude Code behavior. The real
+daemon is launched by `omarchy-shell` (itself started by Hyprland/systemd at login), a
+completely unrelated process tree with none of that — the one test that mattered was
+running the ACTUAL `paBridge.js` daemon standalone via `node`, not another hand-rolled
+`claude -p` invocation from inside this coding session. **One more real trap this
+caught**: an early hand-written MCP config file used a *relative* path to
+`paTools/server.js` and failed silently ("the quake-panel server isn't connected right
+now") — `paBridge.js`'s own `writeMcpConfig()` was already correct (built from
+`path.join(__dirname, ...)` inside a real file, not a `node -e` snippet where
+`__dirname` doesn't mean what it looks like it means), but it's exactly the kind of thing
+worth double-checking again if the "not connected" message ever reappears.
+
+**Also added**: `PersonalCareState.startPomodoro()` — idempotent (only starts if not
+already running), distinct from `togglePomodoro()` which would wrongly *pause* an
+already-running session if the agent (or anything else external) called it while a
+pomodoro was in progress. `Service.qml`'s `IpcHandler` gained `startPomodoro()` so the
+MCP tool (`daemon/src/paTools/server.js`) reaches it the exact same way every other
+external toggle surface reaches this plugin — `omarchy-shell quake-panel startPomodoro`
+— not a separate code path invented for the agent. `KnobRouter.qml`'s per-page `press`
+table gained a fourth entry, `pushToTalk`, reusing the existing per-page-press mechanism
+rather than inventing a new hold-length gesture (the plan's original idea) — a knob
+press is already a discrete, page-scoped action here, and Voxtype has its own "toggle"
+push-to-talk mode for exactly this shape (press to start, press again to send), so this
+needed no new gesture vocabulary at all, on the knob or the on-screen `Talk` button.
+
+**Verified live**: MCP server responds correctly to a raw stdio handshake
+(`initialize`/`tools/list`); the real `paBridge.js` daemon runs a full
+`startTurn`→`endTurn`→transcript→`claude -p`→reply cycle against the real Voxtype
+service and the real `claude` CLI; `startPomodoro()` flips the real
+`personal-care.json` state (verified via a temporary debug IPC hook, removed before
+finishing, per this project's usual pattern); the PA page renders correctly on the real
+panel (screenshot, `capture-panel.sh`-style geometry) — ghost/ready header, "Press Talk
+and ask for something" placeholder, working `Talk` button matching every other page's
+`PanelButton` styling. **Not yet verified**: actually pressing the on-screen button or
+the knob with a real finger/hand and speaking a real request — the daemon-level
+plumbing is proven, but nobody has done the physical gesture yet. Text-only reply only
+(Phase B adds spoken output); no continuous/wake-word mode yet (Phase C).
+
+## 23. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -882,6 +987,9 @@ point, though risk is low since nothing here is bespoke touch code.
 | Virtual touchscreen | `daemon/src/uinputTouch.js` |
 | Real plugin entry point (mode toggle, IPC) | `shell/Service.qml` |
 | Top-bar mode-toggle dropdown (§20) | `shell/BarWidget.qml` |
+| PA voice agent page + orchestration daemon (§22) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`, `shell/Services/PaBridge.qml`, `daemon/src/paBridge.js` |
+| PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
+| PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |

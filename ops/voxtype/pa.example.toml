@@ -1,0 +1,28 @@
+# Voxtype config used ONLY by daemon/src/paBridge.js (the PA/"Foxy" voice agent),
+# passed explicitly via `voxtype -c ~/.config/voxtype/pa.toml ...` — deliberately
+# separate from the user's own everyday dictation config (~/.config/voxtype/config.toml,
+# the RIGHTCTRL hotkey), which is unrelated and untouched by this project.
+#
+# Install: copy this file to ~/.config/voxtype/pa.toml (not tracked in the repo — it's
+# machine-specific, see [audio] device below).
+#
+# Anything not set here falls back to Voxtype's own built-in defaults; this only pins
+# the two things that matter for the PA specifically.
+
+[audio]
+# The panel's own microphone. Confirmed via `lsusb -t`: the panel's controller board
+# (vendor id 0712:0010, "hotlotus wcidtest" — touch + knob, read directly over hidraw by
+# this project's own daemon, see ../../daemon/src/Aris68Connector.js) sits behind an
+# internal 4-port hub alongside a separate, genuinely OS-visible
+# "C-Media Electronics Inc. USB PnP Audio Device" (mono, 48kHz) — this is that device's
+# ALSA name, from `voxtype info devices` (card 0 in /proc/asound/cards on this machine).
+# The existing panel mic on/off toggle (Services/MicState.qml, daemon setMic/queryMic)
+# is believed to gate this same mic line at the hardware level — confirm live (toggle it
+# off/on and watch this device's capture level) before relying on it; re-run
+# `voxtype info devices` / `cat /proc/asound/cards` if this ever stops matching after a
+# reconnect or a different machine's card ordering.
+device = "sysdefault:CARD=Device"
+
+# Whisper expects 16kHz regardless of the source device's native rate (48kHz here) —
+# Voxtype resamples; this just documents the expectation, matches the built-in default.
+sample_rate = 16000

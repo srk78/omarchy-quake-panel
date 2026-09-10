@@ -12,8 +12,10 @@
     "start": "node src/bridge.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "koffi": "^3.2.1",
-    "node-hid": "^3.3.0"
+    "node-hid": "^3.3.0",
+    "zod": "^3.25.0"
   },
   "allowScripts": {
     "node-hid@3.4.0": true,

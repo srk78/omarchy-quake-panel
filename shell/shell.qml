@@ -20,6 +20,7 @@ ShellRoot {
     id: root
 
     readonly property string daemonPath: Quickshell.shellDir + "/../daemon/src/bridge.js"
+    readonly property string paDaemonPath: Quickshell.shellDir + "/../daemon/src/paBridge.js"
     readonly property var panelScreen: Quickshell.screens.find(function (s) {
         return s.name === "DP-1" || s.model === "DK-QUAKE"
     }) || Quickshell.screens[0]
@@ -30,11 +31,14 @@ ShellRoot {
     property KnobLighting knobLighting: KnobLighting { hidBridge: root.hidBridge }
     property MicState micState: MicState { hidBridge: root.hidBridge }
     property ScreenBrightness screenBrightness: ScreenBrightness { hidBridge: root.hidBridge }
+    property PaBridge paBridge: PaBridge { daemonPath: root.paDaemonPath }
+    property PaState paState: PaState { paBridge: root.paBridge }
     property TouchRouter touchRouter: TouchRouter {}
     property Theme theme: Theme {}
     property KnobRouter knobRouter: KnobRouter {
         personalCareState: root.personalCareState
         waterAmountPicker: panelWindow.waterPicker
+        paState: root.paState
     }
 
     Component.onCompleted: {
@@ -83,6 +87,7 @@ ShellRoot {
             micState: root.micState
             screenBrightness: root.screenBrightness
             hidBridge: root.hidBridge
+            paState: root.paState
             touchRouter: root.touchRouter
             theme: root.theme
         }

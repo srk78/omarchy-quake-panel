@@ -17,15 +17,17 @@ QtObject {
     // QtWebEngineQuick::initialize() called before QGuiApplication is constructed, which
     // Quickshell's own binary doesn't do). See Pages/HomeAssistantPage.qml and the repo
     // README for the plan to revisit this (external kiosk browser window instead).
-    property int currentPageIndex: 0 // 0=System, 1=PersonalCare, 2=Settings
-    readonly property int pageCount: 3
+    property int currentPageIndex: 0 // 0=System, 1=PersonalCare, 2=Settings, 3=PA
+    readonly property int pageCount: 4
     required property var personalCareState
     required property var waterAmountPicker
+    required property var paState
 
     readonly property var modeTable: [
         { press: "noop" },           // 0: System
         { press: "pomodoroToggle" }, // 1: Personal Care
         { press: "noop" },           // 2: Settings
+        { press: "pushToTalk" },     // 3: PA — press to start listening, press again to send
     ]
 
     function dispatch(event) {
@@ -46,6 +48,7 @@ QtObject {
         } else if (event.type === "press") {
             var action = root.modeTable[root.currentPageIndex].press
             if (action === "pomodoroToggle") personalCareState.togglePomodoro()
+            else if (action === "pushToTalk") paState.togglePushToTalk()
             // "noop" on System/Settings intentionally does nothing in v1
         }
     }

@@ -126,6 +126,13 @@ built from:
   and stand reminders, laid out as one combined card with three sections across the
   panel's full width.
 - **`Pages/HomeAssistantPage.qml`** — not wired into the page rotation; see Status above.
+- **`Pages/PaPage.qml`** — "Foxy", a voice agent: local speech-to-text (Voxtype) piped to
+  a real tool-using `claude -p` agent (`daemon/src/paBridge.js` + its MCP server,
+  `daemon/src/paTools/server.js`), one tool so far (starting the Pomodoro). Manual
+  push-to-talk only for now (knob press or the on-screen button toggles listening) —
+  see `HISTORY.md` §22 for the design, what's verified, and two non-obvious `claude -p`
+  flags (`--system-prompt`, `--allowedTools`) needed to make tool-calling actually work
+  non-interactively.
 - **`Ui/`** — shared components consumed by both pages: `Card`, `SectionLabel`,
   `SectionSeparator`, `PanelButton` (a touch button that registers itself with
   `TouchRouter`), `PageHeader` (the hero title/status/clock/page-indicator bar),

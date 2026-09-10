@@ -55,6 +55,7 @@ Item {
     // ~/.config/omarchy/plugins/<id>/ by `omarchy plugin add`).
     readonly property string _selfDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
     readonly property string daemonPath: root._selfDir + "../daemon/src/bridge.js"
+    readonly property string paDaemonPath: root._selfDir + "../daemon/src/paBridge.js"
     readonly property var panelScreen: Quickshell.screens.find(function (s) {
         return s.name === "DP-1" || s.model === "DK-QUAKE"
     }) || Quickshell.screens[0]
@@ -66,6 +67,8 @@ Item {
     property KnobLighting knobLighting: KnobLighting { hidBridge: root.hidBridge }
     property MicState micState: MicState { hidBridge: root.hidBridge }
     property ScreenBrightness screenBrightness: ScreenBrightness { hidBridge: root.hidBridge }
+    property PaBridge paBridge: PaBridge { daemonPath: root.paDaemonPath }
+    property PaState paState: PaState { paBridge: root.paBridge }
     property Theme theme: Theme {}
 
     readonly property string _modePath: Quickshell.env("HOME") + "/.local/state/omarchy-quake-panel/mode.json"
@@ -146,11 +149,17 @@ Item {
     // plugins/services/nightlight/Service.qml's status()/enable()/disable()/toggle()
     // shape. All of this project's toggle surfaces (menu entry, Hyprland keybind, the
     // ops/bin CLI wrapper) call through this IPC target — see ops/ for each.
+    //
+    // startPomodoro() exists here specifically for the PA's MCP tool
+    // (daemon/src/paTools/server.js) to call via `omarchy-shell quake-panel
+    // startPomodoro` — the same shape as every other external toggle surface, not a
+    // separate code path invented for the agent.
     IpcHandler {
         target: "quake-panel"
         function status(): string { return root.mode }
         function setMode(mode: string): string { root.setMode(mode); return root.mode }
         function toggleMode(): string { root.toggleMode(); return root.mode }
+        function startPomodoro(): string { root.personalCareState.startPomodoro(); return "ok" }
     }
 
     Component.onCompleted: {
@@ -188,6 +197,7 @@ Item {
             property KnobRouter knobRouter: KnobRouter {
                 personalCareState: root.personalCareState
                 waterAmountPicker: waterAmountPicker
+                paState: root.paState
             }
 
             Connections {
@@ -209,6 +219,7 @@ Item {
                 micState: root.micState
                 screenBrightness: root.screenBrightness
                 hidBridge: root.hidBridge
+                paState: root.paState
                 touchRouter: panelWindow.touchRouter
                 theme: root.theme
             }
