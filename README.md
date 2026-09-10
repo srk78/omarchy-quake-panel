@@ -128,11 +128,22 @@ built from:
 - **`Pages/HomeAssistantPage.qml`** — not wired into the page rotation; see Status above.
 - **`Pages/PaPage.qml`** — "Foxy", a voice agent: local speech-to-text (Voxtype) piped to
   a real tool-using `claude -p` agent (`daemon/src/paBridge.js` + its MCP server,
-  `daemon/src/paTools/server.js`), one tool so far (starting the Pomodoro). Manual
-  push-to-talk only for now (knob press or the on-screen button toggles listening) —
-  see `HISTORY.md` §22 for the design, what's verified, and two non-obvious `claude -p`
-  flags (`--system-prompt`, `--allowedTools`) needed to make tool-calling actually work
-  non-interactively.
+  `daemon/src/paTools/server.js`), one tool so far (starting the Pomodoro), replies
+  spoken aloud via Piper. Manual push-to-talk only for now (knob press or the on-screen
+  button toggles listening) — see `HISTORY.md` §22/§24 for the design, what's verified,
+  and two non-obvious `claude -p` flags (`--system-prompt`, `--allowedTools`) needed to
+  make tool-calling actually work non-interactively.
+
+  Setup this page needs beyond `npm install` in `daemon/`:
+  - **Voxtype** (`voxtype.service`) already running, with a PA-scoped config at
+    `~/.config/voxtype/pa.toml` — copy `ops/voxtype/pa.example.toml` and set
+    `[audio] device` to your panel mic's ALSA name (`voxtype info devices`).
+  - **Piper** — `yay -S piper-tts` (AUR; installs its binary as `piper-tts`, not
+    `piper`, to avoid colliding with an unrelated GTK app of that name in the official
+    repos), then download a voice once: `python -m piper.download_voices
+    en_US-lessac-medium --download-dir ~/.local/share/piper/voices`. A different
+    machine's speaker sink name (`pactl list short sinks`) goes in
+    `OQP_PA_SPEAKER_SINK` if it differs from `daemon/src/paBridge.js`'s default.
 - **`Ui/`** — shared components consumed by both pages: `Card`, `SectionLabel`,
   `SectionSeparator`, `PanelButton` (a touch button that registers itself with
   `TouchRouter`), `PageHeader` (the hero title/status/clock/page-indicator bar),

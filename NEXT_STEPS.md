@@ -3,26 +3,33 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
-## PA voice agent — Phase A done (pending a real finger/voice), Phases B–D not started
+## PA voice agent — Phases A+B done (pending a real finger/voice/ear), C–D not started
 
-See `HISTORY.md` §22 for the full Phase A build (manual push-to-talk, one tool, text
-reply only) and the two `claude -p` gotchas (`--system-prompt` not
-`--append-system-prompt`; `--allowedTools` needed for non-interactive tool permission)
-that took real testing to find.
+See `HISTORY.md` §22 (Phase A: push-to-talk, one tool, text reply) and §24 (Phase B:
+spoken replies via Piper) for the full build, and the `claude -p` gotchas
+(`--system-prompt` not `--append-system-prompt`; `--allowedTools` needed for
+non-interactive tool permission) that took real testing to find.
 
-- **Physically press the on-screen Talk button (or the knob on the PA page) and speak a
-  real request** — this session verified every other link in the chain for real
-  (Voxtype capturing genuine audio through the panel's mic, the daemon's
-  `startTurn`/`endTurn`/`claude -p` cycle, `start_pomodoro` flipping real panel state),
-  but nobody has done the actual physical gesture + spoken command yet. This is the one
-  remaining gap between "built and daemon-tested" and "actually done," same shape as
-  every other "confirmed via IPC, not by a human" item this project tracks.
+- **Physically press the on-screen Talk button (or the knob on the PA page), speak a
+  real request, and confirm you actually HEAR the reply** — this session verified every
+  link in the chain by process/file inspection (Voxtype capturing genuine audio through
+  the panel's mic, the daemon's `startTurn`/`endTurn`/`claude -p`/`speak()` cycle,
+  `start_pomodoro` flipping real panel state, Piper producing a correctly-shaped WAV,
+  `paplay` exiting cleanly against the real speaker sink), but nobody has done the
+  actual physical gesture, spoken command, or listened for the reply yet. This is the
+  one remaining gap between "built and daemon-tested" and "actually done."
+- **Confirm `piper-tts` actually installed from AUR and remove the temporary
+  `~/.local/bin/piper-tts` shim** (a `pip install --user piper-tts` symlinked to that
+  name, used to verify the pipeline while the AUR package's sudo step was pending) —
+  `which piper-tts` should resolve to `/usr/bin/piper-tts` once the real package is in;
+  if it still shows `~/.local/bin/piper-tts`, either the AUR install didn't finish or
+  `$PATH` ordering needs a second look. Removing the shim isn't required for anything to
+  keep working (`/usr/bin` precedes `~/.local/bin` on `$PATH` here), but it's stale
+  clutter once the real package exists.
 - **Confirm the mic mute toggle actually gates the C-Media device**, not just that the
   device works — toggle `MicState`'s on/off (Settings page) and watch
   `pactl list sources` / a capture-level meter while it's off, to be sure `setMic`
   really controls this same audio path and not something unrelated.
-- **Phase B — Piper TTS**: spoken replies, not just text on the page. Nothing installed
-  yet; no voice model chosen yet.
 - **Phase C — continuous "Hey Foxy" mode**: openWakeWord for the wake word, a pulsing
   dot in `Ui/PageHeader.qml` (shared across all pages, not just PA), and — flagged as a
   genuinely open question in the plan, not yet resolved — how a continuous-mode
@@ -34,14 +41,19 @@ that took real testing to find.
 - **Cost/latency of `claude -p` per turn is real and untuned**: a trivial one-line reply
   during this session's testing cost roughly $0.02–0.05 and took several seconds
   end-to-end (`claude-haiku-4-5` was already chosen specifically to keep this down
-  versus the default Sonnet). Worth keeping an eye on once this gets used for real,
-  especially once continuous mode (Phase C) can trigger turns without a deliberate
-  button press.
+  versus the default Sonnet), and Piper synthesis adds its own real time on top (a ~2s
+  reply took a noticeable moment to render before `paplay` even started). Worth keeping
+  an eye on once this gets used for real, especially once continuous mode (Phase C) can
+  trigger turns without a deliberate button press.
 - **`ALLOWED_TOOLS` in `daemon/src/paBridge.js` needs a new entry every time a new MCP
   tool is added** (Phase D's Home Assistant tools especially) — easy to forget, and the
   failure mode (a silent `permission_denials` entry, the model apologizing that it
   "isn't connected") looks like a connection bug rather than a missing allowlist entry.
   See `HISTORY.md` §22 if this happens again.
+- **`OQP_PA_SPEAKER_SINK` is hardcoded to this laptop's exact ALSA sink name** — a
+  different machine (or this one after a hardware change) needs its own value from
+  `pactl list short sinks`, either via that env var or by editing `paBridge.js`'s
+  default.
 
 ## Touch leaking to the main screen — RESOLVED for kiosk mode
 

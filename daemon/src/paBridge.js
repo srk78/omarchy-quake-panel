@@ -2,9 +2,11 @@
 'use strict';
 /*
  * paBridge.js — orchestrates the "PA" voice-agent turn loop: Voxtype (local speech-to-
- * text) -> `claude` CLI (a real agent, given tools via paTools/server.js) -> a spoken/
- * shown reply. See HISTORY.md for the design brainstorm this implements (Phase A: manual
- * push-to-talk, one tool, text reply only — no TTS yet, no wake word yet).
+ * text) -> `claude` CLI (a real agent, given tools via paTools/server.js) -> Piper
+ * (local text-to-speech) -> a spoken/shown reply. See HISTORY.md for the design
+ * brainstorm this implements — Phase A (manual push-to-talk, one tool, text reply) and
+ * Phase B (this file's speak() — spoken replies) are both done; continuous "Hey Foxy"
+ * mode (Phase C) and Home Assistant control (Phase D) are not.
  *
  * A second, independent daemon process from bridge.js/HidBridge.qml on purpose: this one
  * shells out to much slower, heavier, more experimental things (an LLM CLI call can take
@@ -14,7 +16,7 @@
  * MIT-licensed: pure process/IPC orchestration, no device protocol.
  *
  * stdout: one JSON object per line, mirroring bridge.js's own shape:
- *   {"t":"state","state":{"status":"idle"|"listening"|"transcribing"|"thinking"}}
+ *   {"t":"state","state":{"status":"idle"|"listening"|"transcribing"|"thinking"|"speaking"}}
  *   {"t":"transcript","text":"..."}
  *   {"t":"reply","text":"..."}
  *   {"t":"error","message":"..."}
@@ -43,6 +45,27 @@ const TRANSCRIPT_FILE = path.join(os.tmpdir(), 'omarchy-quake-panel-pa-transcrip
 const MCP_CONFIG_FILE = path.join(os.tmpdir(), 'omarchy-quake-panel-pa-mcp.json');
 const MCP_SERVER_SCRIPT = path.join(__dirname, 'paTools', 'server.js');
 const CLAUDE_MODEL = process.env.OQP_PA_MODEL || 'claude-haiku-4-5';
+
+// Piper (piper1-gpl, AUR package "piper-tts") — its binary is installed as `piper-tts`,
+// not `piper`, specifically to avoid colliding with the unrelated GTK gaming-mouse
+// config tool already in the official repos also named "piper" (confirmed live: that
+// exact collision is why the AUR PKGBUILD renames its own binary at package time).
+// Voice model downloaded once via `python -m piper.download_voices en_US-lessac-medium
+// --download-dir ~/.local/share/piper/voices` (see README) — not fetched automatically
+// here, same reasoning as Voxtype's whisper models: a multi-hundred-MB model download
+// has no business happening silently inside a daemon's normal startup path.
+const PIPER_BIN = process.env.OQP_PA_PIPER_BIN || 'piper-tts';
+const PIPER_MODEL = process.env.OQP_PA_PIPER_MODEL
+  || path.join(os.homedir(), '.local', 'share', 'piper', 'voices', 'en_US-lessac-medium.onnx');
+const TTS_WAV_FILE = path.join(os.tmpdir(), 'omarchy-quake-panel-pa-reply.wav');
+// Pinned explicitly rather than trusting PipeWire's current default sink, same
+// reasoning as VOXTYPE_CONFIG pinning the mic: a plugged-in HDMI display can silently
+// change the system default output, which would make Foxy go inaudibly "speak" into a
+// monitor nobody has speakers on. This exact name is THIS machine's laptop speaker
+// (`pactl list short sinks`) — a different machine needs its own value, either via
+// OQP_PA_SPEAKER_SINK or by editing this default.
+const SPEAKER_SINK = process.env.OQP_PA_SPEAKER_SINK
+  || 'alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink';
 
 // Every tool the "quake-panel" MCP server exposes (paTools/server.js), fully qualified
 // as `mcp__<serverName>__<toolName>` — confirmed live to be the exact name Claude Code's
@@ -158,8 +181,39 @@ function askClaude(promptText) {
       return;
     }
     out({ t: 'reply', text: result.result || '' });
+    speak(result.result || '');
+  });
+}
+
+// Piper writes a WAV file (not streamed raw to stdout — avoids having to know/match the
+// voice model's exact sample format on the paplay side; a WAV header carries that for
+// us), then paplay plays that file to the pinned speaker sink. Text goes to Piper over
+// stdin rather than a CLI arg — arbitrary-length model replies have no business being
+// squeezed through argv.
+function speak(text) {
+  const clean = String(text || '').trim();
+  if (!clean) { setStatus('idle'); return; }
+  setStatus('speaking');
+  const synth = spawn(PIPER_BIN, ['-m', PIPER_MODEL, '-f', TTS_WAV_FILE]);
+  let synthErr = '';
+  synth.stderr.on('data', chunk => { synthErr += chunk; });
+  synth.on('error', err => {
+    out({ t: 'error', message: `piper failed to start: ${err.message}` });
     setStatus('idle');
   });
+  synth.on('exit', code => {
+    if (code !== 0) {
+      out({ t: 'error', message: `piper exited with code ${code}${synthErr ? ': ' + synthErr.trim() : ''}` });
+      setStatus('idle');
+      return;
+    }
+    execFile('paplay', ['--device', SPEAKER_SINK, TTS_WAV_FILE], err => {
+      if (err) out({ t: 'error', message: `paplay failed: ${err.message}` });
+      setStatus('idle');
+    });
+  });
+  synth.stdin.write(clean);
+  synth.stdin.end();
 }
 
 function resetSession() { sessionId = null; }

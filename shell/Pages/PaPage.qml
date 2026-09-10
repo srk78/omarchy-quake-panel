@@ -1,11 +1,12 @@
 import QtQuick
 import "../Ui"
 
-// Page 4 — PA ("Foxy"), the voice agent. Phase A of the design in HISTORY.md: manual
+// Page 4 — PA ("Foxy"), the voice agent. Phases A+B of the design in HISTORY.md: manual
 // push-to-talk only (knob press or the on-screen button toggles listening on/off — see
 // Services/PaState.qml's togglePushToTalk()), one real tool (starting the Pomodoro,
-// Services/PersonalCareState.qml's startPomodoro()), and a text-only reply — no
-// continuous "Hey Foxy" mode and no spoken reply yet, both later phases.
+// Services/PersonalCareState.qml's startPomodoro()), and a spoken reply (Piper, driven
+// entirely from daemon/src/paBridge.js — this page just shows the "speaking" status,
+// it doesn't touch audio itself). No continuous "Hey Foxy" mode yet (Phase C).
 //
 // Single full-width Section (not the personal-care/settings pattern of several side by
 // side) — there's one thing on this page, a conversation, not several independent
@@ -20,6 +21,7 @@ Item {
         if (root.paState.status === "listening") return "Listening…"
         if (root.paState.status === "transcribing") return "Transcribing…"
         if (root.paState.status === "thinking") return "Thinking…"
+        if (root.paState.status === "speaking") return "Speaking…"
         if (root.paState.lastError !== "") return "Error"
         return "Ready"
     }

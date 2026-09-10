@@ -977,7 +977,51 @@ the knob with a real finger/hand and speaking a real request — the daemon-leve
 plumbing is proven, but nobody has done the physical gesture yet. Text-only reply only
 (Phase B adds spoken output); no continuous/wake-word mode yet (Phase C).
 
-## 23. Where things live (quick map)
+## 24. "Foxy" gets a voice — Phase B: spoken replies via Piper (2026-09-10)
+
+Phase B of the PA design (§22): the agent's reply is now spoken aloud, not just shown on
+the page. `daemon/src/paBridge.js` gained one function, `speak(text)`, called right
+after emitting the `reply` event — no QML changes needed beyond `PaPage.qml`'s `heroMeta`
+learning about a new `"speaking"` status string, since `PaState.qml`'s status handling
+was already a generic pass-through.
+
+**Piper (piper1-gpl, the actively-maintained OHF-Voice fork — the original
+rhasspy/piper is superseded) has no official Arch package; the AUR one, `piper-tts`,
+needed sudo the user ran themselves** (this session can't authenticate interactively).
+While waiting, verified the whole pipeline with a `pip install --user` copy plus a
+`~/.local/bin/piper-tts` symlink — a deliberately temporary stand-in for exactly the
+same binary name the real package installs, removed once the AUR install lands (`/usr/
+bin` precedes `~/.local/bin` on `$PATH` here, so the real package transparently takes
+over the same command name without any code change once it exists). **The AUR
+package's own PKGBUILD renames its binary from `piper` to `piper-tts` at package time**
+specifically to avoid colliding with an unrelated GTK gaming-mouse configuration tool
+already named `piper` in the official `extra` repo — confirmed by reading the PKGBUILD
+itself, not guessed; `paBridge.js` calls `piper-tts`, never bare `piper`, because of
+this.
+
+**Voice model**: `en_US-lessac-medium`, fetched once via `python -m
+piper.download_voices en_US-lessac-medium --download-dir ~/.local/share/piper/voices`
+— Piper's own bundled downloader, not a manual URL, and not fetched automatically by
+the daemon itself (same reasoning as Voxtype's whisper models: a multi-hundred-MB
+download has no business happening silently inside a daemon's normal startup path).
+
+**Output device pinned explicitly**, same reasoning as `pa.toml` pinning the input
+device: `paplay --device <sink>` with the laptop's own speaker's exact PipeWire sink
+name (`pactl list short sinks`), not whatever the system default happens to be — a
+plugged-in HDMI display can silently change that default, which would make Foxy
+inaudibly "speak" into a monitor nobody has speakers connected to. Both new external
+tool paths (`PIPER_BIN`, `PIPER_MODEL`, `SPEAKER_SINK`) are overridable via
+`OQP_PA_*` environment variables for a different machine.
+
+**Verified**: a full real `startTurn`→`endTurn`→transcript→`claude -p`→reply→`speak()`
+cycle through the actual `paBridge.js` daemon produced a valid WAV (correct sample
+rate/duration for the reply text) and `paplay` exited cleanly against the real speaker
+sink; the same cycle triggered through the real installed plugin via IPC produced no
+QML errors. **Not yet verified**: actually hearing it — this session can run processes
+and inspect their output/exit codes, but has no ears. Ask on next contact whether "Hey
+there! What can I help with?" was audible from the laptop speaker.
+
+## 25. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -990,6 +1034,7 @@ plumbing is proven, but nobody has done the physical gesture yet. Text-only repl
 | PA voice agent page + orchestration daemon (§22) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`, `shell/Services/PaBridge.qml`, `daemon/src/paBridge.js` |
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
 | PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
+| PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
