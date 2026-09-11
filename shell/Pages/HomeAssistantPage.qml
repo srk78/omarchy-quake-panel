@@ -11,7 +11,13 @@ import Quickshell.Io
 // QGuiApplication is constructed, which Quickshell's own binary does not do, so this is
 // not fixable from QML alone. Kept here for when this page comes back as an external
 // kiosk browser window that our shell yields to (rather than an embedded WebEngineView).
-// Reads url/token from ~/.config/omarchy-quake-panel/config.json.
+// Reads url/token from ~/.config/omarchy-quake-panel/config.json — the SAME
+// homeAssistant.url/token pair daemon/src/paTools/server.js's Phase D tools now use for
+// real (see HISTORY.md), which needs the bare API base ("http://host:8123", no path).
+// If this page is ever revived, it needs a full dashboard path
+// ("http://host:8123/lovelace/default_view") to actually load a WebEngineView, so
+// either give it its own config key or accept it needs re-deriving that path from the
+// base URL — don't just reuse `ha.url` as-is the way this file currently does.
 Item {
     id: root
 

@@ -1,6 +1,6 @@
 {
   "homeAssistant": {
-    "url": "http://homeassistant.local:8123/lovelace/default_view",
+    "url": "http://homeassistant.local:8123",
     "token": ""
   },
   "personalCare": {

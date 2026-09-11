@@ -94,7 +94,13 @@ const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '60
 // a non-interactive `-p` call has no human to click "allow" for, and the tool call is
 // silently permission-denied instead of executed — confirmed live the hard way. Add the
 // new tool's qualified name here as later phases add more.
-const ALLOWED_TOOLS = ['mcp__quake-panel__start_pomodoro'];
+const ALLOWED_TOOLS = [
+  'mcp__quake-panel__start_pomodoro',
+  'mcp__quake-panel__list_ha_entities',
+  'mcp__quake-panel__propose_ha_action',
+  'mcp__quake-panel__confirm_pending_action',
+  'mcp__quake-panel__cancel_pending_action',
+];
 
 // Full REPLACEMENT of Claude Code's own default system prompt (--system-prompt), not
 // --append-system-prompt: appending only adds to "you are Claude Code, a software
@@ -110,6 +116,15 @@ const SYSTEM_PROMPT = [
   "genuinely need, ask a brief clarifying question instead of guessing. Use your tools",
   "to actually perform actions rather than just describing them or writing code/shell",
   "commands as text.",
+  "",
+  "For smart-home requests: look up the real device first with list_ha_entities, then",
+  "call propose_ha_action to record what you intend to do — this does not perform the",
+  "action. Tell the user what you are about to do and wait. Only call",
+  "confirm_pending_action after the user clearly says yes/go ahead/confirmed in a later",
+  "message; if they say no or change the subject, call cancel_pending_action instead.",
+  "Never call propose_ha_action and confirm_pending_action in the same response — the",
+  "user must have an actual chance to say yes first. This applies even if you are very",
+  "confident about the request.",
 ].join(' ');
 
 // Written once at startup rather than checked into the repo: the MCP server's absolute
@@ -125,6 +140,15 @@ let turnInFlight = false;
 let continuousMode = false;
 let currentStatus = 'idle';
 let wakeProc = null;
+// Given to each `claude -p` invocation as OQP_PA_TURN_ID (see askClaude), and checked by
+// paTools/server.js's confirm_pending_action against the turn ID stored at propose time
+// — see this file's own header comment on why a code-enforced check exists here at all
+// rather than trusting the system prompt alone: a single `claude -p` call can make
+// several tool calls back-to-back before ever returning text to the human, so nothing
+// about MCP's own mechanics stops the model proposing AND confirming an action inside
+// one turn, before the user has actually said yes to anything. Comparing turn IDs makes
+// that combination fail closed instead of silently working.
+let turnCounter = 0;
 let continuousTurnTimer = null;
 
 function emitState() { out({ t: 'state', state: { status: currentStatus, continuous: continuousMode } }); }
@@ -269,6 +293,7 @@ function stopContinuous() {
 
 function askClaude(promptText) {
   setStatus('thinking');
+  turnCounter += 1;
   const args = [
     '-p', promptText,
     '--mcp-config', MCP_CONFIG_FILE,
@@ -283,7 +308,10 @@ function askClaude(promptText) {
   // CLAUDE.md/skills as unrelated context on every turn (confirmed live — a throwaway
   // test call from the repo root cache-primed over 10k tokens of project context it
   // never needed). --strict-mcp-config already scopes tools; this scopes the rest.
-  execFile('claude', args, { cwd: os.homedir(), maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
+  // OQP_PA_TURN_ID flows to the MCP server subprocess (server.js) this invocation spawns
+  // — see turnCounter's own comment for what it's for.
+  const env = Object.assign({}, process.env, { OQP_PA_TURN_ID: String(turnCounter) });
+  execFile('claude', args, { cwd: os.homedir(), env, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
     if (err) {
       out({ t: 'error', message: `claude CLI failed: ${err.message}${stderr ? ' - ' + stderr : ''}` });
       finishTurn();

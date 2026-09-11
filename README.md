@@ -126,18 +126,23 @@ built from:
   and stand reminders, laid out as one combined card with three sections across the
   panel's full width.
 - **`Pages/HomeAssistantPage.qml`** — not wired into the page rotation; see Status above.
-- **`Pages/PaPage.qml`** — "Foxy", a voice agent: local speech-to-text (Voxtype) piped to
+- **`Pages/PaPage.qml`** — FOXY, a voice agent: local speech-to-text (Voxtype) piped to
   a real tool-using `claude -p` agent (`daemon/src/paBridge.js` + its MCP server,
-  `daemon/src/paTools/server.js`), one tool so far (starting the Pomodoro), replies
-  spoken aloud via Piper. Two ways to talk to it: manual push-to-talk (knob press or the
-  on-screen `Talk` button toggles listening), or continuous "Hey Jarvis" wake-word mode
-  (the `Listen for wake word` button — a small pulsing dot in the shared page header
-  shows it's armed, on every page, not just this one). "Hey Jarvis" is a deliberate
-  stand-in for "Hey Foxy," which needs custom wake-word training (Google Colab — a
-  separate manual step, see `HISTORY.md` §26). See `HISTORY.md` §22/§24/§26 for the full
-  design, what's verified, and the non-obvious gotchas (`claude -p` needs
-  `--system-prompt` + `--allowedTools` to actually call tools non-interactively; a
-  wake-word listener orphan can survive a shell restart and needs `SIGKILL`).
+  `daemon/src/paTools/server.js`). Tools so far: starting the Pomodoro, and — Phase D —
+  real Home Assistant control (lights/switches/climate/locks), gated behind a
+  propose-then-confirm flow the user has to actually respond to before anything happens
+  (`list_ha_entities`/`propose_ha_action`/`confirm_pending_action`/
+  `cancel_pending_action`; see `HISTORY.md` §29 for the code-enforced turn-ID check that
+  makes the gate real rather than just prompted-for). Replies are spoken aloud via
+  Piper. Two ways to talk to it: manual push-to-talk (knob press or the on-screen `Talk`
+  button toggles listening), or continuous "Hey Jarvis" wake-word mode (the
+  `Continuous Mode` button — a small pulsing dot in the shared page header shows it's
+  armed, on every page, not just this one). "Hey Jarvis" is a deliberate stand-in for
+  "Hey Foxy," which needs custom wake-word training (Google Colab — a separate manual
+  step, see `HISTORY.md` §26). See `HISTORY.md` §22/§24/§26/§29 for the full design,
+  what's verified, and the non-obvious gotchas (`claude -p` needs `--system-prompt` +
+  `--allowedTools` to actually call tools non-interactively; a wake-word listener orphan
+  can survive a shell restart and needs `SIGKILL`).
 
   Setup this page needs beyond `npm install` in `daemon/`:
   - **Voxtype** (`voxtype.service`) already running, with a PA-scoped config at
@@ -152,6 +157,13 @@ built from:
   - **openWakeWord** — `pip install --user openwakeword sounddevice` (pure Python +
     ONNX, no compiled-extension packaging needed the way Piper has); its pretrained
     "Hey Jarvis" model ships inside the package itself, no separate download step.
+  - **Home Assistant** (optional — only needed for smart-home control) — copy
+    `config/config.example.json` to `~/.config/omarchy-quake-panel/config.json` and
+    fill in `homeAssistant.url` (the bare base URL, e.g. `http://homeassistant.local:8123`
+    — not a dashboard/lovelace path) and `homeAssistant.token`, a long-lived access
+    token from Home Assistant's own UI (your profile page → Security → Long-Lived
+    Access Tokens → Create Token). This file lives outside the repo on purpose — a
+    token is a real credential, not project source; `chmod 600` it.
 - **`Ui/`** — shared components consumed by both pages: `Card`, `SectionLabel`,
   `SectionSeparator`, `PanelButton` (a touch button that registers itself with
   `TouchRouter`), `PageHeader` (the hero title/status/clock/page-indicator bar),
