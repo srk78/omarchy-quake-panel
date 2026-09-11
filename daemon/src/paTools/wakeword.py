@@ -29,9 +29,16 @@ import sounddevice as sd
 import openwakeword
 from openwakeword.model import Model
 
-MODEL_PATH = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models", "hey_jarvis_v0.1.onnx")
-MODEL_KEY = "hey_jarvis_v0.1"
-THRESHOLD = 0.5  # openWakeWord's own documented default for its pretrained models
+# Env-overridable so swapping in a real trained "Hey Foxy" model (see HISTORY.md — needs
+# openWakeWord's own Colab training notebook, a manual step) is a config change, not a
+# code edit — same pattern as paBridge.js's PIPER_MODEL/OQP_PA_SPEAKER_SINK. The
+# defaults are the stock "Hey Jarvis" pretrained model, unchanged until all three are set.
+MODEL_PATH = os.environ.get(
+    "OQP_PA_WAKEWORD_MODEL",
+    os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models", "hey_jarvis_v0.1.onnx"),
+)
+MODEL_KEY = os.environ.get("OQP_PA_WAKEWORD_MODEL_KEY", "hey_jarvis_v0.1")
+THRESHOLD = float(os.environ.get("OQP_PA_WAKEWORD_THRESHOLD", "0.5"))  # openWakeWord's own documented default for its pretrained models
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1280  # 80ms at 16kHz — openWakeWord's own expected frame size
 # Matched by substring, not exact name or PortAudio index — same philosophy as

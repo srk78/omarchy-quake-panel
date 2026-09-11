@@ -1330,9 +1330,94 @@ single full-width conversation `Section` is now one child of a `Row`, alongside 
 Not yet tried: a full real spoken conversation through the wake-word path specifically
 exercising this visual (all of this session's live verification used push-to-talk turns
 and Piper's own synthesized speech for FOXY's side, which is exactly what drives the
-real reactivity anyway).
+real reactivity anyway). Push-to-talk itself is removed in §31, below.
 
-## 31. Where things live (quick map)
+## 31. FOXY redesign: one power control, auto-follow-up listening, a real scrolling transcript (2026-09-11)
+
+The FOXY page had grown two separate on/off controls (manual push-to-talk "Talk", and a
+"Continuous Mode" toggle) and showed only the single last exchange. This reworks the
+interaction model into one clear control, a more natural back-and-forth, and a real
+conversation history — see the approved plan for the full design; this section covers
+what shipped and what was verified.
+
+**One power control.** The Talk button and `PaState.togglePushToTalk()` are gone —
+`continuousMode` (still the same backend `startContinuous`/`stopContinuous` commands) is
+now the only "is Foxy on" concept anywhere in the UI. `Pages/PaPage.qml` is two sibling
+branches inside the `Card`, visibility driven by `continuousMode`: **off** shows nothing
+but a single centered "Turn Foxy on" button — no header, no conversation, no
+visualizer, confirmed live via screenshot (the request was explicit that the off page
+should show *only* the button); **on** shows the existing CONVERSATION `Section` + 3D
+visualizer `Row`, with the old button pair replaced by one "Turn Foxy off" button.
+`Services/TouchRouter.qml`'s own `_hitTestIn` already skips `!item.visible` targets, so
+toggling `visible` between the two branches needed no special (un)registration handling.
+The knob's per-page press action (`Services/KnobRouter.qml`) changed from
+`pushToTalk` to `foxyToggle` — a physical press now toggles Foxy on/off, mirroring how
+a knob press already toggles the Pomodoro on the Personal Care page. Confirmed with the
+user before building: pressing "Turn Foxy on" arms the wake-word listener but does
+**not** skip straight to listening — "Hey Jarvis" (soon "Hey Foxy," see below) is still
+needed for the first request, same as any later unprompted turn.
+
+**Auto-listen after Foxy asks a question.** `daemon/src/paBridge.js`'s `finishTurn()`
+used to unconditionally re-arm the wake-word listener once a turn ended. Now, right
+before `speak()` is called in `askClaude()`'s success path, a single-shot
+`autoListenAfterReply` flag is set from a simple heuristic — does the trimmed reply end
+in `?` (allowing trailing quote/parenthesis characters) — deliberately not a second
+model call or structured-output field, matching this project's existing preference for
+honest, simple heuristics over more machinery (the fixed-duration recording window
+instead of real VAD, §26, is the precedent). `finishTurn()` consumes that flag exactly
+once: if set, it calls `startTurn()` directly (skipping the wake word) with the same
+fixed-window `continuousTurnTimer` the wake handler itself already uses; otherwise it
+re-arms `startListener()` as before. The flag is also cleared defensively at the top of
+`startTurn()` and in `cancelTurn()`. **Verified live, real end-to-end, twice**: a real
+"Hey Jarvis" + a prompt engineered to make Foxy ask something back ("What would you like
+help with?" / "What's your favorite color?") both put the daemon straight into
+`"listening"` status immediately after Foxy finished speaking — confirmed via a live
+screenshot showing the header meta at "Listening…" with no wake phrase in between, and
+via the transcript itself showing the sequence. One of the two follow-up windows timed
+out with "Nothing transcribed" (a genuine test-methodology timing miss on my end, not a
+code defect) and the daemon correctly fell back to re-arming the wake-word listener —
+which then hit the already-documented, already-mitigated transient `Invalid sample rate
+[PaErrorCode -9997]` ALSA race (§26) and recovered on its own via its existing retry,
+confirmed by checking a fresh `wakeword.py` process was running moments later.
+
+**A real scrolling transcript.** `PaState.qml`'s `lastHeard`/`lastReply` (each
+overwritten every turn) are replaced by a `ListModel` `transcript` of
+`{role, body}` entries (`body`, not `text` — a `ListView` delegate that's itself a
+`Text`-derived item can't declare a `required property string text`; it collides with
+`Text`'s own built-in property, caught before ever deploying), appended via a new
+`_appendLine()` helper wired into the existing `onTranscript`/`onReply`/`onDaemonError`
+handlers. Cleared whenever Foxy is turned off (a purely visual reset — the daemon's own
+`--resume` session memory is untouched). `PaPage.qml` renders it with a `ListView`
+(`interactive: false` — real touch never reaches native flick gestures on this
+layer-shell surface anyway, per `TouchRouter.qml`'s own documented Hyprland bug, so
+scrolling here is deliberately automatic-only via `onCountChanged: positionViewAtEnd()`,
+never a manual drag). **This needed a real fix to `Ui/Section.qml`**, not a page-local
+workaround: its `content` area used to be part of one intrinsic-sized `Column` with the
+header, so a `ListView` inside it had no real viewport height to scroll within — the
+exact class of bug already hit once before (§26's overlapping-button-row wart, from
+unbounded content with no idea where the button row sat). Fixed at the root: `content`
+now lives in its own `Column`, anchored `top: header.bottom` / `bottom: buttonRow.top`,
+so it always gets exactly the space between the separator and the buttons, filled or
+not. Existing `Section` consumers (`PersonalCarePage.qml`, `SettingsPage.qml`) pass
+plain `Text`/`HeroText`/`DetailText` content with no anchors of their own, so this is a
+no-op for them — confirmed via side-by-side screenshots of both pages showing no visual
+change. **Verified live**: the real acoustic test above produced four transcript lines
+across two turns (not just the last one), and the view visibly auto-scrolled to keep the
+newest line in frame as it grew past the visible area.
+
+**"Hey Jarvis" → "Hey Foxy," code side done, training still pending.** A trained
+"Hey Foxy" model needs openWakeWord's own Colab training notebook — a manual, external
+step (a Google account, a browser session; the notebook synthesizes its own training
+audio, no microphone recording required) that only the user can do. Made the swap a
+config change rather than a future code edit: `daemon/src/paTools/wakeword.py`'s
+`MODEL_PATH`/`MODEL_KEY`/`THRESHOLD` are now `OQP_PA_WAKEWORD_MODEL`/
+`OQP_PA_WAKEWORD_MODEL_KEY`/`OQP_PA_WAKEWORD_THRESHOLD` env vars (same pattern as
+`PIPER_MODEL`/`OQP_PA_SPEAKER_SINK`), defaulting to today's stock "Hey Jarvis" model
+until all three are set. Still says "Hey Jarvis" everywhere in code/docs on purpose —
+that gets updated once a real trained model is actually in place and verified working
+via the same real acoustic-loopback method already used for "Hey Jarvis," not before.
+
+## 32. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1346,9 +1431,10 @@ real reactivity anyway).
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
 | PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
 | PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
-| PA continuous "wake word" mode (§26) | `daemon/src/paTools/wakeword.py`, `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
+| PA continuous "wake word" mode (§26, §31) | `daemon/src/paTools/wakeword.py` (model swap via `OQP_PA_WAKEWORD_MODEL`/`_MODEL_KEY`/`_THRESHOLD`), `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | PA Home Assistant control (§29) | `daemon/src/paTools/server.js`'s HA tools, `daemon/src/paBridge.js`'s `OQP_PA_TURN_ID`; credentials at `~/.config/omarchy-quake-panel/config.json` (not in the repo) |
 | FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
+| FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |

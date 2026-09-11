@@ -134,15 +134,20 @@ built from:
   (`list_ha_entities`/`propose_ha_action`/`confirm_pending_action`/
   `cancel_pending_action`; see `HISTORY.md` §29 for the code-enforced turn-ID check that
   makes the gate real rather than just prompted-for). Replies are spoken aloud via
-  Piper. Two ways to talk to it: manual push-to-talk (knob press or the on-screen `Talk`
-  button toggles listening), or continuous "Hey Jarvis" wake-word mode (the
-  `Continuous Mode` button — a small pulsing dot in the shared page header shows it's
-  armed, on every page, not just this one). "Hey Jarvis" is a deliberate stand-in for
-  "Hey Foxy," which needs custom wake-word training (Google Colab — a separate manual
-  step, see `HISTORY.md` §26). See `HISTORY.md` §22/§24/§26/§29 for the full design,
-  what's verified, and the non-obvious gotchas (`claude -p` needs `--system-prompt` +
-  `--allowedTools` to actually call tools non-interactively; a wake-word listener orphan
-  can survive a shell restart and needs `SIGKILL`).
+  Piper. There is exactly one on/off control — a knob press or the on-screen power
+  button — which arms continuous "Hey Jarvis" wake-word listening (a small pulsing dot
+  in the shared page header shows it's armed, on every page, not just this one). Off,
+  the page shows nothing but the power button; on, it shows the conversation (a real
+  scrolling transcript, not just the last exchange) plus the visualizer below. Foxy
+  also auto-listens for a reply — skipping the wake word — right after asking a
+  question, so a back-and-forth doesn't need "Hey Jarvis" repeated every turn. "Hey
+  Jarvis" is a deliberate stand-in for "Hey Foxy," which needs custom wake-word training
+  (Google Colab — a separate manual step, see `HISTORY.md` §26; the model path is now
+  `OQP_PA_WAKEWORD_MODEL`-overridable, see §31, so swapping it in is a config change).
+  See `HISTORY.md` §22/§24/§26/§29/§31 for the full design, what's verified, and the
+  non-obvious gotchas (`claude -p` needs `--system-prompt` + `--allowedTools` to
+  actually call tools non-interactively; a wake-word listener orphan can survive a
+  shell restart and needs `SIGKILL`).
 
   The right 1/5 of this page is a real 3D audio-reactive particle cloud
   (`Ui/FoxyVisualizer.qml`, `QtQuick3D`/`Particles3D` — needs the `qt6-quick3d` system

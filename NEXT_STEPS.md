@@ -3,21 +3,59 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
-## FOXY's 3D particle visualizer — done, one gap remains
+## FOXY's 3D particle visualizer — done
 
 See `HISTORY.md` §30. A real `QtQuick3D`/`Particles3D` cloud on the right 1/5 of the
 FOXY page, verified live: renders and idles correctly, and visibly reacts (denser/
 larger/brighter) during FOXY's real spoken replies. Needs the `qt6-quick3d` system
-package, now installed.
+package, now installed. Now also confirmed rendering correctly during real wake-word-
+triggered turns (§31's redesign testing), since push-to-talk itself no longer exists.
 
-- **Not yet tried through the wake-word path specifically** — all of this session's
-  live verification used push-to-talk turns. The reactivity itself is driven by FOXY's
-  own reply audio regardless of how the turn started, so no different behavior is
-  expected, but it hasn't been watched end-to-end that way yet.
 - If a future pass wants the user's own voice to be genuinely audio-reactive too (not
   just an ambient pulse while listening), re-read this section's write-up in
   `HISTORY.md` §30 first — that was a deliberate, user-approved trade-off against
   reintroducing §26's mic-contention flakiness, not an oversight.
+
+## FOXY redesign: one power control, auto-follow-up, scrolling transcript — done, two gaps remain
+
+See `HISTORY.md` §31. The Talk button is gone; `continuousMode` is now the one on/off
+control, on-screen and via the knob press. Foxy auto-listens (skipping the wake word)
+after asking a question — verified live twice, real acoustic loopback, both times
+correctly going straight to `"listening"` with no wake phrase needed. The transcript is
+now a real scrolling `ListView` (`PaState.qml`'s `transcript` `ListModel`), verified
+live growing across multiple turns and auto-scrolling to the newest line.
+
+- **The knob-press mapping change (`foxyToggle`) has no physical verification** —
+  confirmed via `qmllint` and reading the code against the identical, already-verified
+  Pomodoro-toggle pattern, but nobody has actually pressed the real knob on the FOXY
+  page since this change. Same caveat this project always gives IPC/CLI-only
+  verification of a physical gesture.
+- **The full auto-follow-up round trip (question → auto-listen → a real spoken answer
+  actually getting transcribed) wasn't cleanly demonstrated** — one live attempt timed
+  out with "Nothing transcribed" from a test-timing miss on my end (the follow-up
+  answer was played slightly outside the 6-second `CONTINUOUS_TURN_MS` window), not a
+  code defect: the mechanism itself (mic reopening without a wake word) was clearly
+  confirmed working both times. Worth a cleaner real test — or just real usage — to see
+  a full back-and-forth complete without the timing miss.
+
+## Replacing "Hey Jarvis" with "Hey Foxy" — code side ready, training still needed
+
+`daemon/src/paTools/wakeword.py`'s model is now `OQP_PA_WAKEWORD_MODEL`/
+`OQP_PA_WAKEWORD_MODEL_KEY`/`OQP_PA_WAKEWORD_THRESHOLD`-overridable (see `HISTORY.md`
+§31) — swapping in a real trained model is a config change, not a code edit. Still
+needs, in order:
+
+1. Run openWakeWord's own Colab training notebook (from the `dscripka/openWakeWord`
+   GitHub repo's `notebooks/` directory) with "hey foxy" as the target phrase — a
+   manual step only the user can do (a Google account, a browser session, real
+   wall-clock time; no microphone recording needed, the notebook synthesizes its own
+   training audio).
+2. Download the resulting `.onnx` model file, put it somewhere outside the repo (e.g.
+   `~/.local/share/openwakeword/`, matching the Piper voice model precedent), and set
+   the three env vars above.
+3. Real acoustic verification exactly like `HISTORY.md` §26's original "Hey Jarvis"
+   test, just with the new phrase, before updating the remaining "Hey Jarvis" mentions
+   in code comments/README/HISTORY.
 
 ## PA voice agent — Phases A–D done
 

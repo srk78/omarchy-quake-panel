@@ -26,7 +26,7 @@ QtObject {
     readonly property var modeTable: [
         { press: "noop" },           // 0: System
         { press: "pomodoroToggle" }, // 1: Personal Care
-        { press: "pushToTalk" },     // 2: FOXY — press to start listening, press again to send
+        { press: "foxyToggle" },     // 2: FOXY — toggles Foxy on/off, mirrors the on-screen power button
         { press: "noop" },           // 3: Settings
     ]
 
@@ -48,7 +48,7 @@ QtObject {
         } else if (event.type === "press") {
             var action = root.modeTable[root.currentPageIndex].press
             if (action === "pomodoroToggle") personalCareState.togglePomodoro()
-            else if (action === "pushToTalk") paState.togglePushToTalk()
+            else if (action === "foxyToggle") paState.toggleContinuousMode()
             // "noop" on System/Settings intentionally does nothing in v1
         }
     }

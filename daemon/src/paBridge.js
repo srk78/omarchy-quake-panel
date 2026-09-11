@@ -150,6 +150,13 @@ let wakeProc = null;
 // that combination fail closed instead of silently working.
 let turnCounter = 0;
 let continuousTurnTimer = null;
+// Set right before speak() in askClaude()'s success path when Foxy's own reply reads as
+// a question (see its own comment there) — consumed exactly once by the very next
+// finishTurn(), so only the turn immediately following a question skips the wake word;
+// if the user doesn't respond (or responds with something that isn't itself a
+// question), the turn after that goes back to normal wake-word-gated listening rather
+// than leaving the mic hot indefinitely.
+let autoListenAfterReply = false;
 
 function emitState() { out({ t: 'state', state: { status: currentStatus, continuous: continuousMode } }); }
 function setStatus(status) { currentStatus = status; emitState(); }
@@ -169,13 +176,26 @@ const MIC_HANDOFF_DELAY_MS = 400;
 function finishTurn() {
   turnInFlight = false;
   setStatus('idle');
-  if (continuousMode) setTimeout(startListener, MIC_HANDOFF_DELAY_MS);
+  if (!continuousMode) return;
+  if (autoListenAfterReply) {
+    // Skip the wake word entirely — reuse the exact fixed-window recording mechanics
+    // the wake handler itself uses (startTurn() + a timer that force-ends it), just
+    // without waiting for "Hey Foxy" first.
+    autoListenAfterReply = false;
+    setTimeout(() => {
+      startTurn();
+      continuousTurnTimer = setTimeout(() => { if (turnInFlight) endTurn(); }, CONTINUOUS_TURN_MS);
+    }, MIC_HANDOFF_DELAY_MS);
+  } else {
+    setTimeout(startListener, MIC_HANDOFF_DELAY_MS);
+  }
 }
 
 function startTurn() {
   if (turnInFlight) return;
   stopListener(); // never share the mic with the wake-word listener mid-turn
   turnInFlight = true;
+  autoListenAfterReply = false; // defensive — a fresh turn should never carry over a stale intent from before
   try { fs.unlinkSync(TRANSCRIPT_FILE); } catch (e) { /* fine if it didn't exist yet */ }
   setStatus('listening');
   const proc = spawn('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'start', `--file=${TRANSCRIPT_FILE}`], { stdio: 'ignore' });
@@ -217,6 +237,7 @@ function endTurn() {
 
 function cancelTurn() {
   if (continuousTurnTimer) { clearTimeout(continuousTurnTimer); continuousTurnTimer = null; }
+  autoListenAfterReply = false; // a cancelled turn never reaches a reply — nothing to auto-follow-up on
   execFile('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'cancel'], () => finishTurn());
 }
 
@@ -329,8 +350,16 @@ function askClaude(promptText) {
       finishTurn();
       return;
     }
-    out({ t: 'reply', text: result.result || '' });
-    speak(result.result || '');
+    const replyText = result.result || '';
+    // A simple, deterministic heuristic — "does the reply end in a question mark" — not
+    // a second model call or structured-output plumbing to have Claude explicitly flag
+    // it. Matches this project's existing preference for honest, simple scope over more
+    // machinery (the fixed-duration recording window instead of real VAD, HISTORY.md
+    // §26, is the precedent). Consumed once by finishTurn(), after Foxy's spoken reply
+    // actually finishes playing.
+    autoListenAfterReply = /\?["')\]]*$/.test(replyText.trim());
+    out({ t: 'reply', text: replyText });
+    speak(replyText);
   });
 }
 
