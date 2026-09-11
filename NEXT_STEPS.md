@@ -19,17 +19,13 @@ triggered turns (§31's redesign testing), since push-to-talk itself no longer e
 ## FOXY redesign: one power control, auto-follow-up, scrolling transcript — done, two gaps remain
 
 See `HISTORY.md` §31. The Talk button is gone; `continuousMode` is now the one on/off
-control, on-screen and via the knob press. Foxy auto-listens (skipping the wake word)
-after asking a question — verified live twice, real acoustic loopback, both times
-correctly going straight to `"listening"` with no wake phrase needed. The transcript is
-now a real scrolling `ListView` (`PaState.qml`'s `transcript` `ListModel`), verified
-live growing across multiple turns and auto-scrolling to the newest line.
+control, on-screen and via the knob press — **confirmed working on the real hardware by
+the user's own hand**. Foxy auto-listens (skipping the wake word) after asking a
+question — verified live twice, real acoustic loopback, both times correctly going
+straight to `"listening"` with no wake phrase needed. The transcript is now a real
+scrolling `ListView` (`PaState.qml`'s `transcript` `ListModel`), verified live growing
+across multiple turns and auto-scrolling to the newest line.
 
-- **The knob-press mapping change (`foxyToggle`) has no physical verification** —
-  confirmed via `qmllint` and reading the code against the identical, already-verified
-  Pomodoro-toggle pattern, but nobody has actually pressed the real knob on the FOXY
-  page since this change. Same caveat this project always gives IPC/CLI-only
-  verification of a physical gesture.
 - **The full auto-follow-up round trip (question → auto-listen → a real spoken answer
   actually getting transcribed) wasn't cleanly demonstrated** — one live attempt timed
   out with "Nothing transcribed" from a test-timing miss on my end (the follow-up

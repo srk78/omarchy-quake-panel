@@ -1352,7 +1352,8 @@ visualizer `Row`, with the old button pair replaced by one "Turn Foxy off" butto
 toggling `visible` between the two branches needed no special (un)registration handling.
 The knob's per-page press action (`Services/KnobRouter.qml`) changed from
 `pushToTalk` to `foxyToggle` — a physical press now toggles Foxy on/off, mirroring how
-a knob press already toggles the Pomodoro on the Personal Care page. Confirmed with the
+a knob press already toggles the Pomodoro on the Personal Care page. **Confirmed working
+by the user's own physical knob press**, not just IPC/code-reading. Confirmed with the
 user before building: pressing "Turn Foxy on" arms the wake-word listener but does
 **not** skip straight to listening — "Hey Jarvis" (soon "Hey Foxy," see below) is still
 needed for the first request, same as any later unprompted turn.
