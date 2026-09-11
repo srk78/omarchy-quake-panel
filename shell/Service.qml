@@ -109,6 +109,26 @@ Item {
         function onConnected(iface) { if (iface === "control") root._syncVirtualTouch() }
     }
 
+    // The physical microphone is gated by Foxy's own on/off state, not a separate manual
+    // Settings-page toggle (removed — see HISTORY.md's FOXY redesign) — off by default,
+    // live only while Foxy is actually armed to listen. Same dual-trigger pattern as
+    // _syncVirtualTouch just above: fires on every continuousMode change however it
+    // happens (the on-screen button, the knob, or the daemon's own state push), and once
+    // more as soon as the daemon actually connects, since the compiled-in "off" default
+    // never fires a change signal on its own but the real hardware could still be
+    // sitting in whatever state a previous session left it in.
+    function _syncMic() {
+        root.micState.setOn(root.paState.continuousMode)
+    }
+    property Connections _micSyncConn: Connections {
+        target: root.paState
+        function onContinuousModeChanged() { root._syncMic() }
+    }
+    property Connections _micSyncConnectedConn: Connections {
+        target: root.hidBridge
+        function onConnected(iface) { if (iface === "control") root._syncMic() }
+    }
+
     property FileView modeFile: FileView {
         path: root._modePath
         watchChanges: false
@@ -216,7 +236,6 @@ Item {
                 systemStats: root.systemStats
                 personalCareState: root.personalCareState
                 knobLighting: root.knobLighting
-                micState: root.micState
                 screenBrightness: root.screenBrightness
                 hidBridge: root.hidBridge
                 paState: root.paState

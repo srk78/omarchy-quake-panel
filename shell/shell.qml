@@ -47,6 +47,14 @@ ShellRoot {
         root.hidBridge.touchEvent.connect(root.touchRouter.feed)
         root.hidBridge.daemonError.connect(function (message) { console.log("[daemon error] " + message) })
         root.personalCareState.reminder.connect(function (message) { panelWindow.toast.show(message) })
+        // The physical microphone is gated by Foxy's own on/off state, not a separate
+        // manual Settings-page toggle (removed — see HISTORY.md's FOXY redesign) — off
+        // by default, live only while Foxy is actually armed to listen. Fires on every
+        // continuousMode change, and once more as soon as the daemon connects, since the
+        // compiled-in "off" default never fires a change signal on its own but the real
+        // hardware could still be sitting in whatever state a previous run left it in.
+        root.paState.continuousModeChanged.connect(function () { root.micState.setOn(root.paState.continuousMode) })
+        root.hidBridge.connected.connect(function (iface) { if (iface === "control") root.micState.setOn(root.paState.continuousMode) })
         // Dev/verification only: OQP_START_PAGE=<index> opens on that page, so a screenshot
         // run (see .claude/skills/omarchy-design/scripts/capture-panel.sh) can capture any
         // page without someone physically turning the knob. Normal launches never set it.
@@ -84,7 +92,6 @@ ShellRoot {
             systemStats: root.systemStats
             personalCareState: root.personalCareState
             knobLighting: root.knobLighting
-            micState: root.micState
             screenBrightness: root.screenBrightness
             hidBridge: root.hidBridge
             paState: root.paState

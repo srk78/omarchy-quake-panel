@@ -12,7 +12,6 @@ Item {
     required property var systemStats
     required property var personalCareState
     required property var knobLighting
-    required property var micState
     required property var screenBrightness
     required property var hidBridge
     required property var paState
@@ -84,6 +83,6 @@ Item {
 
     Component { id: dashboardComp; DashboardPage { systemStats: root.systemStats; theme: root.theme } }
     Component { id: careComp; PersonalCarePage { personalCareState: root.personalCareState; touchRouter: root.touchRouter; theme: root.theme } }
-    Component { id: settingsComp; SettingsPage { knobLighting: root.knobLighting; micState: root.micState; screenBrightness: root.screenBrightness; touchRouter: root.touchRouter; theme: root.theme } }
+    Component { id: settingsComp; SettingsPage { knobLighting: root.knobLighting; screenBrightness: root.screenBrightness; touchRouter: root.touchRouter; theme: root.theme } }
     Component { id: paComp; PaPage { paState: root.paState; touchRouter: root.touchRouter; theme: root.theme } }
 }

@@ -1418,7 +1418,34 @@ until all three are set. Still says "Hey Jarvis" everywhere in code/docs on purp
 that gets updated once a real trained model is actually in place and verified working
 via the same real acoustic-loopback method already used for "Hey Jarvis," not before.
 
-## 32. Where things live (quick map)
+## 32. The microphone is now gated by Foxy's own on/off state (2026-09-11)
+
+The Settings page had a separate, manual mic on/off toggle (`Services/MicState.qml` +
+a `Section` on `Pages/SettingsPage.qml`) — independent of whether Foxy was even armed
+to listen. Removed: the mic is now off by default and live only while Foxy is on,
+with no separate switch that could disagree with that. `Service.qml`/`shell.qml` call
+`micState.setOn(paState.continuousMode)` directly — once when the daemon connects
+(forcing a clean default regardless of whatever the hardware was left at from a
+previous session) and again on every `continuousMode` change, mirroring the exact
+dual-trigger shape `Service.qml`'s own `_syncVirtualTouch` already used for a similar
+cross-service sync (§18). `Pages/SettingsPage.qml`'s lower row is now a two-column
+split (Knob Light Brightness / Screen Brightness) instead of three.
+
+**A real race found and fixed before it shipped**, not after: `MicState.qml` used to
+also auto-query the hardware's mic state on every connect (`refresh()`, mirroring
+`KnobLighting.qml`'s own `getLighting`), for the Settings page's now-removed on/off
+display. That query and the new authoritative `setOn()` call both fire off the same
+`hidBridge.connected` signal — confirmed live that the query's reply, being async, could
+arrive *after* `setOn()` already ran, silently overwriting the correctly-commanded
+value with whatever stale state the hardware had from before (`debugMicState()`, a
+temporary debug hook, showed `on: true` at boot despite `setOn(false)` having just been
+called). Since nothing reads `MicState.on`/`.loaded` for display anymore, the query
+served no purpose but to create that race — removed at the root (no more auto-query on
+connect) rather than papered over with a timing guess, and reconfirmed clean afterward:
+`off` at boot, `on` immediately after activating Foxy, `off` again immediately after
+deactivating.
+
+## 33. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1449,7 +1476,7 @@ via the same real acoustic-loopback method already used for "Hey Jarvis," not be
 | Page chrome + page switching | `shell/Ui/PageHost.qml` |
 | Knob RGB ring color + brightness | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml` |
 | Screen brightness | `shell/Services/ScreenBrightness.qml` |
-| Panel microphone on/off | `shell/Services/MicState.qml` |
+| Panel microphone on/off, gated by Foxy (§32) | `shell/Services/MicState.qml`, `shell/Service.qml`/`shell.qml`'s `setOn(paState.continuousMode)` wiring |
 | Shared section-column shape (Self Care + Settings) | `shell/Ui/Section.qml` |
 | Touch-drag slider (Ui/Slider.qml's own TouchRouter support) | `shell/Ui/Slider.qml`, `shell/Services/TouchRouter.qml` |
 | Virtual touch device on/off by mode (§18's fix) | `daemon/src/bridge.js`'s `setVirtualTouch`, `shell/Service.qml`'s `_syncVirtualTouch` |

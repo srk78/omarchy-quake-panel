@@ -2,17 +2,22 @@ import QtQuick
 import "../Ui"
 
 // Page 3 — Settings: the knob's RGB ring color and light brightness
-// (Services/KnobLighting.qml), the panel's own screen brightness
+// (Services/KnobLighting.qml), and the panel's own screen brightness
 // (Services/ScreenBrightness.qml — a genuinely separate hardware control, not the same
 // thing, hence "KNOB LIGHT BRIGHTNESS" rather than plain "BRIGHTNESS" as the section
-// label), and the built-in microphone (Services/MicState.qml). Its own page rather than
-// folded into Self Care or the System page: settings are a distinct category from
-// either, and this gives room to grow without cramming unrelated controls into an
-// existing page's card.
+// label). Its own page rather than folded into Self Care or the System page: settings
+// are a distinct category from either, and this gives room to grow without cramming
+// unrelated controls into an existing page's card.
+//
+// The built-in microphone (Services/MicState.qml) used to have its own manual toggle
+// here too — removed (see HISTORY.md's FOXY redesign): the mic is now gated entirely by
+// Foxy's own on/off state (Service.qml/shell.qml wire this directly), off by default
+// and live only while Foxy is actually armed to listen, so a separate manual switch that
+// could disagree with that was just a confusing extra degree of freedom.
 //
 // Layout: the color row needs the full page width (ten swatches), so it gets its own
-// full-width block up top; the other three controls each need much less, so they share
-// a second row split into three Ui/Section columns (the same section shape
+// full-width block up top; the other two controls each need much less, so they share a
+// second row split into two Ui/Section columns (the same section shape
 // Pages/PersonalCarePage.qml uses) — this fills the page's height instead of leaving a
 // large empty area below a single top-aligned block. Ui/Slider.qml is this app's first
 // continuous (not tap) touch control — see its own header comment and
@@ -31,11 +36,10 @@ Item {
     id: root
     required property var knobLighting
     required property var screenBrightness
-    required property var micState
     required property var touchRouter
     required property var theme
 
-    readonly property string heroMeta: "Knob ring · Mic " + (root.micState.loaded ? (root.micState.on ? "on" : "off") : "…")
+    readonly property string heroMeta: "Knob ring & brightness"
 
     Card {
         theme: root.theme
@@ -135,12 +139,12 @@ Item {
                 topMargin: root.theme.spacing.lg
             }
             spacing: root.theme.space(24)
-            readonly property real thirdWidth: (width - spacing * 2 - 2) / 3
+            readonly property real halfWidth: (width - spacing) / 2
 
             Section {
                 theme: root.theme
                 icon: "󰃿"; label: "KNOB LIGHT BRIGHTNESS"
-                width: lowerRow.thirdWidth
+                width: lowerRow.halfWidth
 
                 Text {
                     width: parent.width
@@ -169,7 +173,7 @@ Item {
             Section {
                 theme: root.theme
                 icon: "󰃞"; label: "SCREEN BRIGHTNESS"
-                width: lowerRow.thirdWidth
+                width: lowerRow.halfWidth
 
                 Text {
                     width: parent.width
@@ -190,26 +194,6 @@ Item {
                     maxValue: root.screenBrightness.valueMax
                     value: root.screenBrightness.value
                     onSettled: function (v) { root.screenBrightness.setValue(v) }
-                }
-            }
-
-            SectionSeparator { theme: root.theme; vertical: true }
-
-            Section {
-                theme: root.theme
-                icon: "󰍬"; label: "MICROPHONE"
-                width: lowerRow.thirdWidth
-
-                // No separate hero value here (unlike the two brightness columns) — the
-                // PanelButton below already shows "On"/"Off" as its own label, so a
-                // duplicate readout above it was redundant, not consistent. Reported
-                // live and removed.
-                button: PanelButton {
-                    theme: root.theme
-                    touchRouter: root.touchRouter
-                    icon: root.micState.on ? "󰍬" : "󰍭"
-                    text: root.micState.loaded ? (root.micState.on ? "On" : "Off") : "…"
-                    onActivated: root.micState.toggle()
                 }
             }
         }

@@ -34,21 +34,42 @@ across multiple turns and auto-scrolling to the newest line.
   confirmed working both times. Worth a cleaner real test — or just real usage — to see
   a full back-and-forth complete without the timing miss.
 
-## Replacing "Hey Jarvis" with "Hey Foxy" — code side ready, training still needed
+## Replacing "Hey Jarvis" with "Hey Foxy" — training in progress, integration plan changed
 
-`daemon/src/paTools/wakeword.py`'s model is now `OQP_PA_WAKEWORD_MODEL`/
-`OQP_PA_WAKEWORD_MODEL_KEY`/`OQP_PA_WAKEWORD_THRESHOLD`-overridable (see `HISTORY.md`
-§31) — swapping in a real trained model is a config change, not a code edit. Still
-needs, in order:
+The original plan (see `HISTORY.md` §31, `daemon/src/paTools/wakeword.py`'s
+`OQP_PA_WAKEWORD_MODEL`/`_MODEL_KEY`/`_THRESHOLD` env vars) assumed training with
+openWakeWord's own notebook, producing a model directly loadable by the `openwakeword`
+Python package already used in `wakeword.py`. That notebook turned out to be badly
+bit-rotted against current library versions (Python 3.13 wheel gaps, removed scipy/
+pyarrow APIs, a restructured `piper-sample-generator` repo, `datasets`' torchcodec
+switch, moved-source dataset repos — a long, fully-diagnosed chain, not abandoned for
+lack of trying) and after real user frustration with the back-and-forth, training moved
+to a different, actively-maintained tool: **nanowakeword**
+(`github.com/arcosoph/nanowakeword`), via its own Colab notebook.
 
-1. Run openWakeWord's own Colab training notebook (from the `dscripka/openWakeWord`
-   GitHub repo's `notebooks/` directory) with "hey foxy" as the target phrase — a
-   manual step only the user can do (a Google account, a browser session, real
-   wall-clock time; no microphone recording needed, the notebook synthesizes its own
-   training audio).
-2. Download the resulting `.onnx` model file, put it somewhere outside the repo (e.g.
-   `~/.local/share/openwakeword/`, matching the Piper voice model precedent), and set
-   the three env vars above.
+**This changes the integration, not just the model file**: nanowakeword has its own
+inference API (`from nanowakeword import NanoInterpreter`), not openWakeWord's
+(`openwakeword.model.Model`). The resulting `.onnx` file is not a drop-in swap via the
+existing env vars — `wakeword.py` needs an actual code change once the model exists:
+swap its detection loop from `openwakeword.model.Model` to `nanowakeword`'s
+`NanoInterpreter`, and add `nanowakeword` as a new pip dependency alongside
+`openwakeword`/`sounddevice`.
+
+**Decided**: unlike Piper's voice model (a generic, publicly re-downloadable asset kept
+outside the repo), this trained model is a one-of-a-kind artifact from the user's own
+training run that nobody else could regenerate without redoing the whole process — so
+it gets **committed to the repo** at `daemon/src/paTools/models/hey_foxy.onnx` (small —
+low single-digit MB at most, nothing like Piper's model), with `wakeword.py`'s default
+model path resolved relative to the script itself so a fresh clone just works with no
+separate download step. The `OQP_PA_WAKEWORD_MODEL`-style env var override stays
+available for anyone who wants to swap in a different trained phrase later.
+
+Still needs, in order:
+
+1. The `.onnx` file finishes training (in progress as of this session) and lands at
+   `daemon/src/paTools/models/hey_foxy.onnx`.
+2. `wakeword.py`'s rewrite to use `nanowakeword`'s `NanoInterpreter` instead of
+   `openwakeword.model.Model`, and `daemon/package.json`'s new dependency.
 3. Real acoustic verification exactly like `HISTORY.md` §26's original "Hey Jarvis"
    test, just with the new phrase, before updating the remaining "Hey Jarvis" mentions
    in code comments/README/HISTORY.
@@ -236,7 +257,7 @@ before this approach worked). One thing remains genuinely open:
   re-audited this session: any icon glyph chosen in an earlier session purely from a
   cmap-presence check rather than an actual screenshot.
 
-## Settings page / knob RGB ring / mic toggle (new, done pending a physical look)
+## Settings page / knob RGB ring (new, done pending a physical look)
 
 - **Physically look at the knob's ring** after picking a color on the Settings page —
   this session verified the full round trip at the firmware level (set a color, restart
@@ -247,11 +268,12 @@ before this approach worked). One thing remains genuinely open:
   incidentally, the ring's real state was already off with a stale color when this was
   tested, which is exactly the case the current-detection fix needed to handle), but
   nobody has looked at the physical ring to confirm it actually goes dark.
-- **Physically confirm the microphone toggle actually mutes/unmutes** — the query/set
-  round-trip was verified against the device's own reported state (toggled off, queried
-  back as off; toggled back on before finishing), but nothing in this session could
-  confirm audio is actually captured or blocked, only that the device acknowledges the
-  on/off flag.
+- **Physically confirm the microphone actually mutes/unmutes** — there's no manual
+  toggle anymore (`HISTORY.md` §32: the mic is now gated entirely by Foxy's own on/off
+  state, `off` at boot, `on` only while Foxy is armed). The command round-trip is
+  verified against the device's own reported state and a real race at boot was found
+  and fixed (§32), but nothing in this session could confirm audio is actually captured
+  or blocked at the hardware level, only that the device acknowledges the on/off flag.
 - **Physically look at the ring while dragging the Knob Light Brightness slider** — the
   round-trip (drag to a value, full restart, `getLighting()` reads back a
   quantized-but-close value) is confirmed at the firmware level, same as color; nobody
@@ -264,12 +286,6 @@ before this approach worked). One thing remains genuinely open:
   not the physical light output), so nobody has confirmed the screen actually dims.
   Screen brightness also has no `saveLighting`-equivalent persist command in the driver
   — worth confirming whether it survives a power cycle at all, or always resets.
-- **The mic was found off at the start of the brightness/layout session**, despite being
-  explicitly restored to on at the end of the previous one — restored to on again before
-  finishing, but nothing in either session explains why it didn't hold. Worth a glance if
-  it happens again: either the device doesn't persist mic state the way ring lighting
-  does (no `saveLighting`-equivalent exists for it in `Aris68Connector.js`), or something
-  else reset it between sessions.
 - **`KnobLighting.solidColorEffect` (currently `1`) is inferred from QMK convention, not
   verified against this exact firmware's effect list** — `Aris68Connector.js`'s own
   comment only documents effect indices as "0=All Off … 43 (RGB-Matrix list)", no names.
