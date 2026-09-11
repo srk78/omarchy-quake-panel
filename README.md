@@ -144,6 +144,13 @@ built from:
   `--allowedTools` to actually call tools non-interactively; a wake-word listener orphan
   can survive a shell restart and needs `SIGKILL`).
 
+  The right 1/5 of this page is a real 3D audio-reactive particle cloud
+  (`Ui/FoxyVisualizer.qml`, `QtQuick3D`/`Particles3D` — needs the `qt6-quick3d` system
+  package, `sudo pacman -S qt6-quick3d`). It reacts to FOXY's own spoken reply with a
+  real volume envelope computed from the actual reply audio; the user's own voice while
+  listening gets a generic ambient pulse instead, deliberately not a live mic tap — see
+  `HISTORY.md` §30 for why.
+
   Setup this page needs beyond `npm install` in `daemon/`:
   - **Voxtype** (`voxtype.service`) already running, with a PA-scoped config at
     `~/.config/voxtype/pa.toml` — copy `ops/voxtype/pa.example.toml` and set

@@ -356,13 +356,103 @@ function speak(text) {
       finishTurn();
       return;
     }
+    // The particle visualizer (Ui/FoxyVisualizer.qml) reacts to Foxy's own reply audio
+    // by replaying its precomputed volume envelope in time with playback — not a live
+    // tap on the output stream. Piper writes the whole file before playback starts
+    // anyway (it isn't a streaming synthesizer), so the exact envelope is already known
+    // up front; this avoids running yet another audio-consuming process alongside
+    // paplay for something a one-time file read already answers exactly.
+    let envelope = [];
+    try { envelope = computeAudioEnvelope(TTS_WAV_FILE, AUDIO_LEVEL_FPS); } catch (e) {
+      out({ t: 'error', message: `audio envelope extraction failed: ${e.message}` });
+      // Not fatal to the reply itself — Foxy still speaks, the visualizer just won't
+      // react to this particular line.
+    }
     execFile('paplay', ['--device', SPEAKER_SINK, TTS_WAV_FILE], err => {
+      stopAudioLevelPlayback();
       if (err) out({ t: 'error', message: `paplay failed: ${err.message}` });
       finishTurn();
     });
+    startAudioLevelPlayback(envelope);
   });
   synth.stdin.write(clean);
   synth.stdin.end();
+}
+
+// --- Foxy's speech reactivity (FoxyVisualizer.qml) ------------------------------
+
+const AUDIO_LEVEL_FPS = 30;
+let audioLevelTimer = null;
+
+// Minimal hand-rolled RIFF/WAVE reader — good enough for Piper's own output (confirmed
+// live: mono 16-bit PCM, see HISTORY.md), and avoids a new dependency for something
+// this small. Computes RMS amplitude over fixed windows, normalized against this
+// specific clip's own peak (not a fixed reference level) so a quiet reply and a loud
+// one both read as comparably lively rather than the quiet one barely registering.
+function computeAudioEnvelope(wavPath, fps) {
+  const buf = fs.readFileSync(wavPath);
+  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('not a RIFF/WAVE file');
+  }
+  let offset = 12;
+  let fmt = null;
+  let dataOffset = -1, dataLength = 0;
+  while (offset + 8 <= buf.length) {
+    const chunkId = buf.toString('ascii', offset, offset + 4);
+    const chunkSize = buf.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    if (chunkId === 'fmt ') {
+      fmt = {
+        numChannels: buf.readUInt16LE(chunkStart + 2),
+        sampleRate: buf.readUInt32LE(chunkStart + 4),
+        bitsPerSample: buf.readUInt16LE(chunkStart + 14),
+      };
+    } else if (chunkId === 'data') {
+      dataOffset = chunkStart;
+      dataLength = chunkSize;
+    }
+    offset = chunkStart + chunkSize + (chunkSize % 2); // chunks are word-aligned
+  }
+  if (!fmt || dataOffset < 0) throw new Error('missing fmt or data chunk');
+  if (fmt.bitsPerSample !== 16) throw new Error(`unsupported bits per sample: ${fmt.bitsPerSample}`);
+
+  const bytesPerFrame = 2 * fmt.numChannels;
+  const totalSamples = Math.floor(dataLength / bytesPerFrame);
+  const windowSamples = Math.max(1, Math.round(fmt.sampleRate / fps));
+  const envelope = [];
+  let peak = 0;
+  for (let i = 0; i < totalSamples; i += windowSamples) {
+    const end = Math.min(i + windowSamples, totalSamples);
+    let sumSquares = 0, count = 0;
+    for (let s = i; s < end; s++) {
+      const sampleOffset = dataOffset + s * bytesPerFrame; // channel 0 only — Piper's output is mono anyway
+      if (sampleOffset + 2 > buf.length) break;
+      const sample = buf.readInt16LE(sampleOffset) / 32768;
+      sumSquares += sample * sample;
+      count++;
+    }
+    const rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
+    envelope.push(rms);
+    if (rms > peak) peak = rms;
+  }
+  const norm = Math.max(peak, 0.02); // floor avoids amplifying near-silent clips into noise
+  return envelope.map(v => Math.min(1, v / norm));
+}
+
+function startAudioLevelPlayback(envelope) {
+  stopAudioLevelPlayback();
+  if (!envelope.length) return;
+  let i = 0;
+  audioLevelTimer = setInterval(() => {
+    if (i >= envelope.length) { stopAudioLevelPlayback(); return; }
+    out({ t: 'audioLevel', value: envelope[i] });
+    i += 1;
+  }, 1000 / AUDIO_LEVEL_FPS);
+}
+
+function stopAudioLevelPlayback() {
+  if (audioLevelTimer) { clearInterval(audioLevelTimer); audioLevelTimer = null; }
+  out({ t: 'audioLevel', value: 0 }); // settle the visualizer back to idle immediately, not on whatever the last frame happened to be
 }
 
 function resetSession() { sessionId = null; }

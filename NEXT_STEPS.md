@@ -3,6 +3,22 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## FOXY's 3D particle visualizer — done, one gap remains
+
+See `HISTORY.md` §30. A real `QtQuick3D`/`Particles3D` cloud on the right 1/5 of the
+FOXY page, verified live: renders and idles correctly, and visibly reacts (denser/
+larger/brighter) during FOXY's real spoken replies. Needs the `qt6-quick3d` system
+package, now installed.
+
+- **Not yet tried through the wake-word path specifically** — all of this session's
+  live verification used push-to-talk turns. The reactivity itself is driven by FOXY's
+  own reply audio regardless of how the turn started, so no different behavior is
+  expected, but it hasn't been watched end-to-end that way yet.
+- If a future pass wants the user's own voice to be genuinely audio-reactive too (not
+  just an ambient pulse while listening), re-read this section's write-up in
+  `HISTORY.md` §30 first — that was a deliberate, user-approved trade-off against
+  reintroducing §26's mic-contention flakiness, not an oversight.
+
 ## PA voice agent — Phases A–D done
 
 **Phases A+B confirmed working by the user's own hand**: "I tried it, it is working.

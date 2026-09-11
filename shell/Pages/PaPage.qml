@@ -13,9 +13,11 @@ import "../Ui"
 // in Ui/PageHeader.qml, not here — it needs to show on every page, not just this one,
 // since continuous mode keeps listening no matter which page is on screen.
 //
-// Single full-width Section (not the personal-care/settings pattern of several side by
-// side) — there's one thing on this page, a conversation, not several independent
-// controls that each need their own column.
+// A Row split, 4/5 conversation + 1/5 a 3D particle-cloud visualizer
+// (Ui/FoxyVisualizer.qml) — same computed-width-column pattern Pages/SettingsPage.qml
+// already uses for its own three-way split. The visualizer needs `qt6-quick3d`
+// installed (see FoxyVisualizer.qml's own header comment and HISTORY.md for why a real
+// 3D module, not a browser or a flat 2D approximation).
 Item {
     id: root
     required property var paState
@@ -60,56 +62,73 @@ Item {
         theme: root.theme
         anchors.fill: parent
 
-        // Content-descriptive label, not a repeat of the page title/icon — matching
-        // every other page's own section convention (Personal Care's POMODORO/WATER/
-        // STAND, Settings' KNOB COLOR/etc. never just repeat "Self Care"/"Settings"
-        // either). FOXY + the fox icon already live in the shared page header
-        // (Ui/PageHeader.qml) — showing them a second time here was redundant.
-        Section {
-            theme: root.theme
-            icon: "󰍩"; label: "CONVERSATION"
+        Row {
+            id: pageRow
             anchors.fill: parent
             anchors.margins: root.theme.space(16)
+            spacing: root.theme.space(16)
+            readonly property real visualizerWidth: (width - spacing) * 0.2
+            readonly property real conversationWidth: width - spacing - visualizerWidth
 
-            Column {
-                width: parent.width
-                spacing: root.theme.spacing.rowGap
+            // Content-descriptive label, not a repeat of the page title/icon —
+            // matching every other page's own section convention (Personal Care's
+            // POMODORO/WATER/STAND, Settings' KNOB COLOR/etc. never just repeat "Self
+            // Care"/"Settings" either). FOXY + the fox icon already live in the shared
+            // page header (Ui/PageHeader.qml) — showing them a second time here was
+            // redundant.
+            Section {
+                theme: root.theme
+                icon: "󰍩"; label: "CONVERSATION"
+                width: pageRow.conversationWidth
 
-                Line {
-                    visible: root.paState.lastHeard !== ""
-                    text: "You: " + root.paState.lastHeard
-                    color: root.theme.secondaryForeground
+                Column {
+                    width: parent.width
+                    spacing: root.theme.spacing.rowGap
+
+                    Line {
+                        visible: root.paState.lastHeard !== ""
+                        text: "You: " + root.paState.lastHeard
+                        color: root.theme.secondaryForeground
+                    }
+                    Line {
+                        visible: root.paState.lastReply !== ""
+                        text: "Foxy: " + root.paState.lastReply
+                        font.bold: true
+                    }
+                    Line {
+                        visible: root.paState.lastError !== ""
+                        text: root.paState.lastError
+                        color: root.theme.secondaryForeground
+                    }
+                    Line {
+                        visible: root.paState.lastHeard === "" && root.paState.lastReply === "" && root.paState.lastError === ""
+                        text: "Press Talk and ask for something — try “start the pomodoro”."
+                        color: root.theme.secondaryForeground
+                    }
                 }
-                Line {
-                    visible: root.paState.lastReply !== ""
-                    text: "Foxy: " + root.paState.lastReply
-                    font.bold: true
+
+                button: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: root.buttonIcon
+                    text: root.buttonText
+                    onActivated: root.paState.togglePushToTalk()
                 }
-                Line {
-                    visible: root.paState.lastError !== ""
-                    text: root.paState.lastError
-                    color: root.theme.secondaryForeground
-                }
-                Line {
-                    visible: root.paState.lastHeard === "" && root.paState.lastReply === "" && root.paState.lastError === ""
-                    text: "Press Talk and ask for something — try “start the pomodoro”."
-                    color: root.theme.secondaryForeground
+                button2: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: root.paState.continuousMode ? "󰋋" : "󰍭"
+                    text: root.paState.continuousMode ? "Continuous Mode: On" : "Continuous Mode: Off"
+                    onActivated: root.paState.toggleContinuousMode()
                 }
             }
 
-            button: PanelButton {
+            FoxyVisualizer {
                 theme: root.theme
-                touchRouter: root.touchRouter
-                icon: root.buttonIcon
-                text: root.buttonText
-                onActivated: root.paState.togglePushToTalk()
-            }
-            button2: PanelButton {
-                theme: root.theme
-                touchRouter: root.touchRouter
-                icon: root.paState.continuousMode ? "󰋋" : "󰍭"
-                text: root.paState.continuousMode ? "Continuous Mode: On" : "Continuous Mode: Off"
-                onActivated: root.paState.toggleContinuousMode()
+                width: pageRow.visualizerWidth
+                height: pageRow.height
+                audioLevel: root.paState.audioLevel
+                status: root.paState.status
             }
         }
     }

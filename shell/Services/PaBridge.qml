@@ -15,6 +15,10 @@ QtObject {
     signal transcript(string text)
     signal reply(string text)
     signal daemonError(string message)
+    // Fired ~30x/sec while Foxy's own reply is playing (paBridge.js's speak() streams
+    // this from the reply audio's own precomputed volume envelope, not a live mic tap —
+    // see Ui/FoxyVisualizer.qml and HISTORY.md). 0..1, normalized.
+    signal audioLevel(real value)
 
     function sendCommand(cmdObj) {
         proc.write(JSON.stringify(cmdObj) + "\n")
@@ -32,6 +36,7 @@ QtObject {
                 else if (msg.t === "transcript") root.transcript(msg.text)
                 else if (msg.t === "reply") root.reply(msg.text)
                 else if (msg.t === "error") root.daemonError(msg.message)
+                else if (msg.t === "audioLevel") root.audioLevel(msg.value)
             }
         }
         stderr: SplitParser {

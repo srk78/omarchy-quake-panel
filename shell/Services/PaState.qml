@@ -14,6 +14,9 @@ QtObject {
     // Whether the daemon's wake-word listener is armed — read by Ui/PageHeader.qml's
     // pulsing dot (shown on every page, not just this one) via PageHost.qml.
     property bool continuousMode: false
+    // 0..1, normalized — Foxy's own reply volume, streamed from paBridge.js while
+    // status === "speaking". Read by Pages/PaPage.qml's Ui/FoxyVisualizer.qml.
+    property real audioLevel: 0
 
     // Last exchange only, not a scrolling history — the panel's own screen is a short,
     // wide strip (see PaPage.qml), and each turn already carries its own memory via the
@@ -70,5 +73,6 @@ QtObject {
         function onTranscript(text) { root.lastHeard = text }
         function onReply(text) { root.lastReply = text }
         function onDaemonError(message) { root.lastError = message }
+        function onAudioLevel(value) { root.audioLevel = value }
     }
 }

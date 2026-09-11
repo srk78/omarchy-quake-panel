@@ -1247,7 +1247,92 @@ thing being confirmed could be arbitrary.
 No QML changes needed for this phase — it's purely new tool-calling capability, surfaced
 through the same conversation transcript UI Phase A already built.
 
-## 30. Where things live (quick map)
+## 30. A 3D audio-reactive particle cloud on the FOXY page (2026-09-11)
+
+The user asked for a visual companion to FOXY's conversation area, inspired by a
+Three.js/WebGL audio-reactive particle demo: a 3D particle cloud, occupying the right
+1/5 of the page, reacting to both the user's own speech and FOXY's replies. This app is
+Qt Quick/QML inside Quickshell, not a browser, and this project already has a
+documented, hard-won reason not to try embedding a real web engine (§3/§4's
+`WebEngineView` crash) — so rather than chase that dead end again, this is a
+from-scratch equivalent built on Qt's own native 3D module, `QtQuick3D`/`Particles3D`.
+
+**The single biggest unproven risk going in**: nothing in this project had ever put a
+`View3D` inside Quickshell's own scene before. It's a different rendering technology
+than `WebEngineView` (a native Qt Quick item, not an embedded browser engine) so there
+was no specific reason to expect the same crash — but "no specific reason to expect it"
+isn't the same as "confirmed safe," so the plan's first step, before building anything
+else, was proving a minimal `View3D` scene renders inside the real installed plugin at
+all. **It did, on the first real attempt** — no crash, confirmed via
+`omarchy-restart-shell` + `journalctl --user -t omarchy-shell` + a real screenshot of
+the FOXY page with the particle cloud rendering and idling correctly.
+
+**New system dependency**: `qt6-quick3d` (official Arch `extra` repo, ~21MB) — not a
+default Quickshell/Omarchy dependency, sudo-gated the same way `piper-tts` was, so the
+user installed it by hand (`sudo pacman -S qt6-quick3d`) before any of this QML could
+even load. Confirmed genuinely absent beforehand and genuinely present after, with
+`ParticleEffects`/`Particles3D`/`Helpers`/`AssetUtils` all present under
+`/usr/lib/qt6/qml/QtQuick3D/`.
+
+**Reactivity is asymmetric on purpose, a deliberate scope decision the user agreed to
+up front, not an oversight**:
+
+- FOXY's own reply gets *real* reactivity — `daemon/src/paBridge.js`'s `speak()` reads
+  Piper's finished WAV file (a hand-rolled RIFF/WAVE parser, no new dependency — the
+  same mono 16-bit PCM format already confirmed in §24), computes an RMS volume
+  envelope over ~30 windows/sec normalized against the clip's own peak, and streams it
+  to QML as `{"t":"audioLevel","value":0..1}` events timed to match `paplay`'s actual
+  playback, stopping when playback's own exit callback fires. Real reactivity is
+  possible here specifically *because* this app generates that audio itself and can
+  measure it exactly before a single sample plays.
+- The user's own voice while `status === "listening"` gets a generic ambient "breathing"
+  pulse instead — deliberately **not** a real mic tap. §26's whole wake-word-listener
+  saga already established the panel's mic as a carefully single-consumer-at-a-time
+  resource between Voxtype and the wake-word listener; a third live consumer during a
+  recording risked reintroducing that exact flakiness for what would only ever be a
+  decorative effect. The user chose this trade-off explicitly when asked.
+
+**Built entirely from Qt's own primitives, no new asset files**: the particle cloud uses
+`ModelParticle3D` with Qt's built-in `"#Sphere"` mesh (via a plain `Model`), not
+`SpriteParticle3D` — a sprite particle needs a texture image, and this project has never
+had an image asset anywhere (every existing visual is a Nerd Font glyph, a flat color,
+or plain shapes); reusing a built-in primitive mesh keeps that true here too. Flat-shaded
+(`PrincipledMaterial.NoLighting`) to match the app's flat/no-gradient design language
+rather than introducing a new lit-rendering look nothing else on the panel uses. Exact
+QML type/property names (`ParticleSystem3D`, `ParticleEmitter3D`, `ParticleShape3D`,
+`VectorDirection3D`, `Wander3D`, `ModelParticle3D`'s actual property list, etc.) were
+verified against the installed module's own `plugins.qmltypes` metadata before writing
+any QML, not guessed from memory or general Qt familiarity — the same "verify, don't
+guess" discipline this project has followed since earlier icon-glyph mistakes.
+
+**Files**: `shell/Ui/FoxyVisualizer.qml` (new — the `View3D`/`ParticleSystem3D` scene);
+`daemon/src/paBridge.js` (WAV envelope extraction + timed `audioLevel` events in
+`speak()`); `shell/Services/PaBridge.qml` (new `audioLevel` signal, parsed from the
+existing stdout line handler); `shell/Services/PaState.qml` (new `audioLevel` property,
+updated via the existing `_bridgeConn` pattern); `shell/Pages/PaPage.qml` (the previous
+single full-width conversation `Section` is now one child of a `Row`, alongside a new
+`FoxyVisualizer` taking the remaining 1/5 width).
+
+**Verified live, in layers, matching the plan's own build order**:
+
+1. The WAV-envelope math confirmed correct in isolation against a real Piper-generated
+   file (a realistic speech-shaped envelope, not silence or clipping).
+2. The full daemon confirmed to actually stream `audioLevel` events in real time during
+   real `paplay` playback, roughly in sync with the audio's real duration.
+3. A real conversation turn on the real panel, screenshotted during FOXY's actual
+   spoken reply and compared directly against an idle-state screenshot (tight-cropped,
+   excluding the card border to avoid polluting the comparison) — the particle cloud is
+   visibly denser, larger, and brighter during real speech than at idle. Idle motion
+   (a constant `Wander3D` drift, amplified but never absent, so a frozen field never
+   reads as broken) and the listening-state ambient pulse were also confirmed rendering
+   correctly.
+
+Not yet tried: a full real spoken conversation through the wake-word path specifically
+exercising this visual (all of this session's live verification used push-to-talk turns
+and Piper's own synthesized speech for FOXY's side, which is exactly what drives the
+real reactivity anyway).
+
+## 31. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1263,6 +1348,7 @@ through the same conversation transcript UI Phase A already built.
 | PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
 | PA continuous "wake word" mode (§26) | `daemon/src/paTools/wakeword.py`, `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | PA Home Assistant control (§29) | `daemon/src/paTools/server.js`'s HA tools, `daemon/src/paBridge.js`'s `OQP_PA_TURN_ID`; credentials at `~/.config/omarchy-quake-panel/config.json` (not in the repo) |
+| FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
