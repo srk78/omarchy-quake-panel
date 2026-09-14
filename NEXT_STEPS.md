@@ -17,6 +17,14 @@ knowing about if the bar widget ever seems unresponsive again: it lives on the r
 side of the bar, not the left (§34 has the full story of how a working feature looked
 broken for a while because of this).
 
+Testing the mic fix with a genuine physical power cycle (§35) surfaced two more real
+bugs no software-only restart could have caught: the kiosk window not re-homing to a
+reconnected panel output (fixed, then a real regression in that same fix caught
+unplugging the panel and dragging kiosk content onto the main screen — also fixed), and
+the knob's chosen color not actually surviving a real power-off at the firmware level
+(worked around with a local preference file the app reconciles against the device on
+every reconnect). All confirmed working by the user on the real hardware.
+
 ## FOXY's 3D particle visualizer — done
 
 See `HISTORY.md` §30. A real `QtQuick3D`/`Particles3D` cloud on the right 1/5 of the
@@ -255,41 +263,43 @@ before this approach worked). One thing remains genuinely open:
   re-audited this session: any icon glyph chosen in an earlier session purely from a
   cmap-presence check rather than an actual screenshot.
 
-## Settings page / knob RGB ring (new, done pending a physical look)
+## Settings page / knob RGB ring — mostly resolved via real power-cycle testing
 
-- **Physically look at the knob's ring** after picking a color on the Settings page —
-  this session verified the full round trip at the firmware level (set a color, restart
-  the shell fresh, and `getLighting()` genuinely read the same value back from the
-  device), but there is no camera on this hardware, so nobody has actually confirmed the
-  ring itself renders as a stable solid color rather than, say, continuing to animate.
-  Same caveat for "None": confirmed `setLedEffect(0)` round-trips correctly (and,
-  incidentally, the ring's real state was already off with a stale color when this was
-  tested, which is exactly the case the current-detection fix needed to handle), but
-  nobody has looked at the physical ring to confirm it actually goes dark.
+See `HISTORY.md` §35. A genuine physical power cycle (not just a software restart —
+the first time this project ever tested that) settled two things that were previously
+only verified at the firmware-reported-value level, never by real physical observation:
+
+- **`KnobLighting.solidColorEffect` (`1`) is confirmed correct** — the ring does settle
+  into a real, stable solid color once the app (re-)sends it; this was never actually
+  the bug. **Resolved**, no longer open.
+- **`saveLighting()` (VIA `0x09`) does not reliably persist through a real power-off on
+  this exact firmware** — confirmed after two different timing-based fixes both failed
+  against real hardware. Worked around at the software layer (a local preference file,
+  reconciled against the device on every reconnect) rather than fixed at the firmware
+  layer, which is out of reach from here. **Verified working** by the user on real
+  hardware: the ring briefly shows its firmware boot-default cycling animation right
+  after power-on, then self-corrects to the last chosen color within moments of the
+  daemon reconnecting.
+- **Still open**: whether `setLedBrightness`'s own value has the same real-persistence
+  gap as color did (the new reconciliation logic also re-applies brightness when it
+  mismatches, so it should already be covered, but this hasn't been separately
+  power-cycle-tested the way color was).
 - **Physically confirm the microphone actually mutes/unmutes** — there's no manual
   toggle anymore (`HISTORY.md` §32: the mic is now gated entirely by Foxy's own on/off
   state, `off` at boot, `on` only while Foxy is armed). The command round-trip is
   verified against the device's own reported state and a real race at boot was found
-  and fixed (§32), but nothing in this session could confirm audio is actually captured
-  or blocked at the hardware level, only that the device acknowledges the on/off flag.
-- **Physically look at the ring while dragging the Knob Light Brightness slider** — the
-  round-trip (drag to a value, full restart, `getLighting()` reads back a
-  quantized-but-close value) is confirmed at the firmware level, same as color; nobody
-  has looked at the actual ring to confirm brightness visibly changes, or that a low
-  value is dim rather than, say, imperceptible or unchanged.
-- **Physically look at the screen while dragging the Screen Brightness slider** — same
-  situation as the ring: `setBrightness`/`queryLuminance`'s software round-trip is
-  confirmed (drag to a value, read the same value back), but a `grim` screenshot
-  fundamentally cannot show a backlight change (it captures the rendered framebuffer,
-  not the physical light output), so nobody has confirmed the screen actually dims.
-  Screen brightness also has no `saveLighting`-equivalent persist command in the driver
-  — worth confirming whether it survives a power cycle at all, or always resets.
-- **`KnobLighting.solidColorEffect` (currently `1`) is inferred from QMK convention, not
-  verified against this exact firmware's effect list** — `Aris68Connector.js`'s own
-  comment only documents effect indices as "0=All Off … 43 (RGB-Matrix list)", no names.
-  If a chosen preset doesn't look like a stable solid color on the real ring (animates,
-  cycles, etc.), this is the constant to revisit — see `shell/Services/KnobLighting.qml`'s
-  own header comment.
+  and fixed (§32), but nothing has confirmed audio is actually captured or blocked at
+  the hardware level, only that the device acknowledges the on/off flag.
+- **Physically look at the screen while dragging the Screen Brightness slider** — the
+  ring's own brightness/color now have real physical confirmation (above), but screen
+  brightness is a separate, still-unconfirmed control: `setBrightness`/
+  `queryLuminance`'s software round-trip is confirmed (drag to a value, read the same
+  value back), but a `grim` screenshot fundamentally cannot show a backlight change (it
+  captures the rendered framebuffer, not the physical light output), so nobody has
+  confirmed the screen actually dims. Screen brightness also has no
+  `saveLighting`-equivalent persist command in the driver at all — given color's own
+  `saveLighting()` turned out not to reliably work either, this is worth assuming
+  doesn't persist through a power cycle unless/until proven otherwise.
 - **`qmllint` did not catch a real load-time error** ("Cannot assign to non-existent
   default property" from a bare `Connections {}` under a `QtObject`) — see `HISTORY.md`
   §9. Worth remembering for any future `QtObject`-rooted service: give every non-visual

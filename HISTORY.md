@@ -1611,7 +1611,80 @@ out-of-range value; deliberately does not write a corrected value back to the de
 (no unrequested hardware action). Verified on the real device: the Settings page showed
 exactly 100% after the fix, on the same hardware that had been reading 103% before it.
 
-## 35. Where things live (quick map)
+## 35. Two more real-power-cycle findings: a screen-leak regression, and the ring's actual color fix (2026-09-14)
+
+Testing §34's mic fix with a genuine physical power cycle of the panel (not just a
+software restart) — the first time this project ever did that — surfaced two more real
+bugs neither of which a software-only restart could ever have caught.
+
+**The kiosk window doesn't re-home to a reconnected output on its own.** After a real
+panel power cycle, `Service.qml`'s own `mode` stayed correctly "kiosk" the whole time,
+but nothing was actually rendering on the panel — Hyprland's ordinary desktop showed
+through, looking exactly like "desktop mode" despite the app never leaving "kiosk."
+Toggling mode off and back on fixed it, which only works because that destroys and
+recreates the whole `PanelWindow`. Root cause: `Quickshell.screens` genuinely does emit
+a real `screensChanged` notify (confirmed via its own qmltypes) so `panelScreen`'s
+binding correctly re-evaluates to a fresh `Screen` object on reconnect — but a Wayland
+layer-shell surface is bound to a specific output at creation time, and an
+already-mapped `PanelWindow` doesn't re-home itself just because its `screen:`
+binding's value later changes. Fixed by watching for that change and forcing the same
+teardown+rebuild the manual toggle already achieved — routed through a new reactive
+`_forceKioskReload` flag added to `Loader.active`'s own binding expression, specifically
+*not* a direct `kioskLoader.active = false/true` assignment, which would have silently
+replaced (and permanently broken) the existing `active: root.mode === "kiosk"` binding.
+
+**A real regression found one hour later, from the very same class of fix**: `panelScreen`
+falls back to `Quickshell.screens[0]` (in practice, the laptop's own screen) when the
+real panel isn't found — a dev-convenience default older than this session. The first
+version of the reconnect-recovery above watched *that* fallback-inclusive value, which
+also changes the moment the real panel disconnects and the fallback kicks in — so
+unplugging the panel started dragging the kiosk window onto the main screen, exactly the
+leak this app's whole per-output design exists to prevent. Fixed by splitting the
+property in two — `_realPanelScreen` (the actual match, or `undefined`) and `panelScreen`
+(that or the fallback) — and having the recovery logic watch only the former, doing
+nothing at all when the real panel disconnects rather than ever rebuilding against the
+fallback. (A `qmllint`-clean but genuinely uncertain moment along the way: whether
+`on_RealPanelScreenChanged` — capitalizing the letter right after the underscore — was
+even the correct handler name for an underscore-prefixed property with no existing
+precedent anywhere in this codebase. Verified empirically with a throwaway `qml`
+runtime test rather than guessed: it is correct — `on_fooChanged` for a property named
+`_foo` is a parse error, `on_FooChanged` is the real one.)
+
+**The knob's chosen color doesn't survive a real power cycle, and it isn't a timing
+bug.** Two different theories were tried and both failed against real hardware: an
+immediate `saveLighting()` call right after `setLedEffect`/`setLedColor` (§34's original
+implementation), and then a version that waited for the device's own `getLighting()` to
+actually confirm the new value before saving. Neither made the ring come back in the
+chosen color after a genuine power-off — it came back cycling through colors (a
+firmware boot default) every time, even though the device's own RAM-resident state was
+always immediately correct (confirmed via the very same `getLighting()` confirmation).
+Checked a sibling project driving the identical hardware
+(`~/Projects/bedrock-panel`, an independent Windows/Electron implementation, per its own
+`docs/DEVICE_PROTOCOL.md`) — it uses byte-identical VIA commands (`0x07`/`0x08`/`0x09`
+set/get/save) and independently confirms them against the vendor's own DK-Suite tool,
+ruling out "wrong command byte" — but its own UI never chains save right after set at
+all; it's a fully separate, user-triggered action with no code evidence either way that
+its own save reliably survives a real power-off. Working conclusion: `saveLighting()`'s
+flash-write does not reliably work on this exact firmware, and no amount of client-side
+timing can fix a device-side no-op.
+
+Worked around at the software layer instead of chased further at the firmware layer:
+`KnobLighting.qml` now also keeps its own persisted preference
+(`~/.local/state/omarchy-quake-panel/knob-lighting.json`, same shape as `Service.qml`'s
+`mode.json`/`PersonalCareState.qml`'s own state file) and reconciles against it on every
+`getLighting()` reply — if the device's reported effect/color disagrees with what was
+last chosen (exactly what a failed flash-save plus a real power-off produces), the app
+re-sends the correct effect/color/brightness and re-arms a save, all within moments of
+reconnecting, with no user action needed. Skipped whenever a save the user just
+requested is still in flight, so it never fights an in-progress deliberate change
+against a now-stale comparison. Verified in software by directly emitting a fake
+`hidBridge.stateEvent` reporting the exact "forgot, now cycling" state and confirming
+the reconciliation logic detected the mismatch and corrected it — then **verified for
+real**: a genuine power cycle now shows the boot-default cycling animation only
+briefly, self-correcting to the chosen color within moments of the daemon reconnecting,
+confirmed by the user on the real hardware.
+
+## 36. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1619,7 +1692,7 @@ exactly 100% after the fix, on the same hardware that had been reading 103% befo
 | HID/USB driver | `daemon/src/Aris68Connector.js` |
 | Daemon CLI entry | `daemon/src/bridge.js` |
 | Virtual touchscreen | `daemon/src/uinputTouch.js` |
-| Real plugin entry point (mode toggle, IPC) | `shell/Service.qml` |
+| Real plugin entry point (mode toggle, IPC, panel-reconnect recovery — §35) | `shell/Service.qml`'s `_realPanelScreen`/`_forceKioskReload` |
 | Top-bar mode-toggle dropdown + connection status (§20, §34) | `shell/BarWidget.qml`, `shell/Service.qml`'s `deviceConnected` |
 | PA voice agent page + orchestration daemon (§22) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`, `shell/Services/PaBridge.qml`, `daemon/src/paBridge.js` |
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
@@ -1640,7 +1713,7 @@ exactly 100% after the fix, on the same hardware that had been reading 103% befo
 | Overlays | `shell/Ui/ToastOverlay.qml`, `shell/Ui/WaterAmountPicker.qml` |
 | Shared styled components | `shell/Ui/Card.qml`, `SectionLabel.qml`, `SectionSeparator.qml`, `PanelButton.qml`, `PageHeader.qml` |
 | Page chrome + page switching | `shell/Ui/PageHost.qml` |
-| Knob RGB ring color + brightness (clamped on read-back — §34) | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml` |
+| Knob RGB ring color + brightness (clamped on read-back §34; software-side persistence workaround for an unreliable device flash-save §35) | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml`; local state at `~/.local/state/omarchy-quake-panel/knob-lighting.json` |
 | Screen brightness | `shell/Services/ScreenBrightness.qml` |
 | Panel microphone on/off, gated by Foxy (§32) | `shell/Services/MicState.qml`, `shell/Service.qml`/`shell.qml`'s `setOn(paState.continuousMode)` wiring |
 | Shared section-column shape (Self Care + Settings) | `shell/Ui/Section.qml` |

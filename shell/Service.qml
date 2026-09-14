@@ -56,9 +56,55 @@ Item {
     readonly property string _selfDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
     readonly property string daemonPath: root._selfDir + "../daemon/src/bridge.js"
     readonly property string paDaemonPath: root._selfDir + "../daemon/src/paBridge.js"
-    readonly property var panelScreen: Quickshell.screens.find(function (s) {
+    // Split into "the real panel, if actually present" and "what to use if not" —
+    // deliberately NOT the same property, after a real regression: an earlier version
+    // of the reconnect-recovery fix below (see its own comment) reacted to *any* change
+    // in the fallback-inclusive value, which also fires the moment the real panel
+    // disconnects and the fallback (Quickshell.screens[0], normally the laptop's own
+    // screen) kicks in — confirmed live (2026-09-14) that this dragged the kiosk
+    // window onto the main screen on unplug, exactly the leak this app's whole
+    // per-output design (see this file's own top-of-file comment) exists to prevent.
+    // The recovery logic below now watches _realPanelScreen specifically, so it only
+    // ever fires when reconnecting to an actual DK-QUAKE panel, never when falling
+    // back to some other screen because the real one is genuinely gone.
+    readonly property var _realPanelScreen: Quickshell.screens.find(function (s) {
         return s.name === "DP-1" || s.model === "DK-QUAKE"
-    }) || Quickshell.screens[0]
+    })
+    readonly property var panelScreen: root._realPanelScreen || Quickshell.screens[0]
+
+    // Quickshell.screens has a real screensChanged notify (confirmed via its own
+    // qmltypes), so _realPanelScreen's binding above does correctly re-evaluate to a
+    // fresh Screen object whenever the panel's output disconnects and reconnects (e.g.
+    // a real power cycle of the panel hardware, not just this software restarting).
+    // What does NOT happen on its own: the already-created PanelWindow below noticing
+    // that its own `screen:` binding now points at a different object and re-homing
+    // itself there — confirmed live (2026-09-14) that after a real panel power cycle,
+    // `mode` and `panelScreen` were both still correct, but nothing was actually
+    // rendering on the panel (Hyprland's ordinary desktop showed through instead,
+    // looking exactly like "desktop mode" even though the app never left "kiosk").
+    // Toggling mode off and back on fixed it — which works only because that
+    // destroys and recreates the whole PanelWindow via the Loader below, forcing a
+    // fresh `screen:` binding against whatever panelScreen currently is. A Wayland
+    // layer-shell surface is created against a specific output at protocol level, so
+    // this isn't really a Quickshell bug to work around so much as an expected
+    // consequence of that: reassigning `screen:` on an already-mapped surface was never
+    // going to move it. Forcing the same teardown+rebuild automatically whenever the
+    // real panel reconnects, instead of requiring the manual toggle — and doing
+    // nothing at all when it disconnects, leaving whatever window already exists
+    // alone rather than ever rebuilding it against the fallback screen.
+    // Not a direct `kioskLoader.active = false/true` — imperatively assigning a
+    // property that already has a declarative binding (active: root.mode === "kiosk"
+    // below) would permanently replace that binding with a plain static value,
+    // silently breaking the real mode toggle for the rest of the session. Routing
+    // through this extra reactive flag instead means the Loader's `active` binding
+    // itself never gets touched — only one of its own inputs does.
+    property bool _forceKioskReload: false
+    on_RealPanelScreenChanged: {
+        if (!root._realPanelScreen) return // the real panel just disconnected — leave things as they are, never rebuild against the fallback
+        if (root.mode !== "kiosk") return // Loader isn't active; nothing to recreate
+        root._forceKioskReload = true
+        Qt.callLater(function () { root._forceKioskReload = false })
+    }
 
     // ---- Always-on, regardless of mode ----
     property HidBridge hidBridge: HidBridge { daemonPath: root.daemonPath }
@@ -204,7 +250,8 @@ Item {
     // water picker, the reminder toast). Recreated fresh each time kiosk mode is
     // (re-)entered — currentPageIndex resetting to Dashboard on re-entry is expected.
     Loader {
-        active: root.mode === "kiosk"
+        id: kioskLoader
+        active: root.mode === "kiosk" && !root._forceKioskReload
         sourceComponent: kioskComponent
     }
 
