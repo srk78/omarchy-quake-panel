@@ -114,7 +114,9 @@ const SYSTEM_PROMPT = [
   "two sentences unless asked for more. When a request is missing information you",
   "genuinely need, ask a brief clarifying question instead of guessing. Use your tools",
   "to actually perform actions rather than just describing them or writing code/shell",
-  "commands as text.",
+  "commands as text. Never use markdown formatting — no asterisks, bullet points,",
+  "headers, or backticks. Your replies are read aloud by a speech synthesizer, not",
+  "displayed as text, so write plain spoken sentences only.",
   "",
   "For smart-home requests: look up the real device first with list_ha_entities, then",
   "call propose_ha_action to record what you intend to do — this does not perform the",
@@ -225,7 +227,14 @@ function endTurn() {
     let text = '';
     try { text = fs.readFileSync(TRANSCRIPT_FILE, 'utf8').trim(); } catch (e) { /* nothing transcribed */ }
     if (!text) {
-      out({ t: 'error', message: 'Nothing transcribed' + (outcome ? ` (${JSON.stringify(outcome)})` : '') });
+      // Silence after the wake word (or Foxy's own auto-follow-up) is the routine case
+      // now, not a surprise worth a chat-visible error — there's no more manual "I
+      // meant to say something" push-to-talk button (removed, see HISTORY.md's FOXY
+      // redesign); every turn today starts from the wake word or the auto-follow-up.
+      // Still logged to stderr (reaches the daemon's own debug log via PaBridge.qml's
+      // "[paBridge:stderr]" echo) so it stays diagnosable without cluttering the
+      // transcript.
+      console.error('Nothing transcribed' + (outcome ? ` (${JSON.stringify(outcome)})` : ''));
       finishTurn();
       return;
     }
@@ -362,6 +371,26 @@ function askClaude(promptText) {
   });
 }
 
+// The system prompt already asks Claude not to use markdown, but a model can still slip
+// (habit from its usual text-formatting context) — this is the code-level guarantee: no
+// literal "asterisk"/markdown punctuation ever reaches Piper, regardless of what the
+// model actually wrote. Deliberately only touches what's sent to Piper, not the
+// on-screen transcript (out({t:'reply',...}) below already ran before speak() is
+// called) or the autoListenAfterReply question-detection heuristic — those keep
+// operating on Claude's original text.
+function stripMarkdownForSpeech(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/_(.+?)_/g, '$1')
+    .replace(/[*_]/g, '') // leftover unpaired markers
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[-*]\s+/gm, '')
+    .trim();
+}
+
 // Piper writes a WAV file (not streamed raw to stdout — avoids having to know/match the
 // voice model's exact sample format on the paplay side; a WAV header carries that for
 // us), then paplay plays that file to the pinned speaker sink. Text goes to Piper over
@@ -370,6 +399,7 @@ function askClaude(promptText) {
 function speak(text) {
   const clean = String(text || '').trim();
   if (!clean) { finishTurn(); return; }
+  const spoken = stripMarkdownForSpeech(clean);
   setStatus('speaking');
   const synth = spawn(PIPER_BIN, ['-m', PIPER_MODEL, '-f', TTS_WAV_FILE]);
   let synthErr = '';
@@ -403,7 +433,7 @@ function speak(text) {
     });
     startAudioLevelPlayback(envelope);
   });
-  synth.stdin.write(clean);
+  synth.stdin.write(spoken);
   synth.stdin.end();
 }
 

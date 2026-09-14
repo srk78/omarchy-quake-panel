@@ -120,7 +120,13 @@ QtObject {
                 root.loaded = true
             }
             if (l.brightness !== undefined) {
-                root.brightness = l.brightness
+                // The device reports a raw, unclamped byte (0-255) — confirmed live: a
+                // stale/factory value above brightnessMax showed as 103% on the Settings
+                // page. Clamped here, at the source, so no consumer (the percentage
+                // label, the Slider's own position) can ever see an out-of-range value.
+                // Deliberately doesn't write a corrected value back to the device — that
+                // would be an unrequested hardware action; only the display is corrected.
+                root.brightness = Math.min(root.brightnessMax, Math.max(root.brightnessMin, l.brightness))
                 root.loaded = true
             }
         }

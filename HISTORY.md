@@ -1527,7 +1527,91 @@ answered "2 plus 2 is 4." by the real running daemon end to end. The wake-word l
 hit and recovered from the same pre-existing, already-documented transient ALSA race
 from §26 in between — unrelated to this change, confirmed self-recovering as before.
 
-## 34. Where things live (quick map)
+## 34. Six fixes from real use: bar status, daily resets, water reset, quieter silence, no more "asterisk", brightness clamp (2026-09-14)
+
+**Bar-widget connection status.** The top-bar dropdown used to always show both mode
+options regardless of whether the panel hardware was actually connected — picking
+either does nothing useful without a real device. `HidBridge.qml` already emitted real
+`connected`/`disconnected` signals per interface, driven by `Aris68Connector.js`'s own
+rescan loop (real hot-plug was already tracked, just never surfaced). `Service.qml`
+now mirrors it into a plain `deviceConnected` boolean (same dual-trigger pattern as
+`_syncVirtualTouch`/`_syncMic`); `BarWidget.qml` reads it to hide the mode options
+(`Repeater`'s `model` becomes `[]`, not a `visible: false` on the Repeater itself — a
+Repeater's delegates are reparented to its own parent for layout, so toggling the
+Repeater's own visibility does **not** hide already-created delegates, a real gotcha
+caught before it shipped) and show "Disconnected" instead, plus a diagonal
+strike-through over the bar icon — reusing Omarchy's own `TailscaleIcon.qml` technique
+(a plain rotated `Rectangle`, not a new glyph) instead of guessing another Nerd Font
+codepoint.
+
+**A real debugging detour, worth recording**: while verifying this live, the icon
+appeared not to change at all — not even a full-bleed test `Rectangle` in bright red.
+Console-log instrumentation proved the property chain was correct end to end
+(`service` resolves, `mode`/`deviceConnected` both fire real change signals, final
+widget geometry a normal 26×26) before the actual cause surfaced: **the widget lives on
+the right side of the bar, not the left** — every verification screenshot for this
+whole feature had been aimed at a completely different, pre-existing Omarchy icon that
+happened to look plausible. A pixel scan of the full bar for the test overlay's red
+color (`>150,<80,<80`) found it immediately, ~1700px to the right of where every prior
+shot had looked. No code was ever actually broken; confirmed correct in both states
+once pointed at the right pixels. Left as a reminder for next time: when a
+live-verified change appears to do nothing, checking *where* is being looked at is
+cheaper than re-deriving the binding chain from first principles.
+
+**Daily counters actually reset daily.** `PersonalCareState.qml`'s `_rollOverIfNeeded()`
+already zeroed the water/pomodoro counters correctly on a new day — but it was only
+ever *called* from `_load()` and the two mutation entry points (`logWater`,
+`_startPomodoro`). A panel sitting idle across midnight with nothing logged just kept
+showing yesterday's numbers indefinitely, since nothing else ever asked "has the day
+changed?" Fixed with a plain minute-granularity `Timer` calling the same, already-correct
+function — no new reset logic, just making sure it actually runs. Verified live via a
+temporary fire-counter: confirmed the timer genuinely fires within its interval with no
+user interaction.
+
+**Water intake is resettable.** `PersonalCarePage.qml`'s WATER section only had "Log
+water"; Pomodoro and Stand already had a second Reset button. Added
+`PersonalCareState.resetWater()` (clears `todayWaterCount`/`todayWaterMl`/`waterLog`
+only — deliberately leaves `lastDrinkAt`/`lastAmountMl` alone, mirroring
+`resetPomodoro()`'s own choice to reset the session but leave `todayPomodoroCount`
+untouched) and a matching `button2`. Verified live: logged water twice (0.55 L / 2
+logged), reset, confirmed 0.00 L / 0 logged with "last ago" unaffected.
+
+**"Nothing transcribed" stopped being a visible error.** Every turn today starts either
+from the wake word or from Foxy's own auto-follow-up (§31 removed the manual
+push-to-talk button entirely) — so silence after a wake is the routine case now, not a
+surprise worth a chat-visible error. `paBridge.js`'s `endTurn()` now logs that one case
+to stderr (still reaches the daemon's own debug log) instead of emitting a `{t:'error'}`
+event; genuine failures (a real voxtype crash or launch failure) are unchanged.
+Verified live: a real "Hey Foxy" with no follow-up speech produced no new transcript
+line at all, while the pre-existing, unrelated ALSA listener race still correctly
+showed up as an actual error.
+
+**Foxy stopped saying "asterisk."** Claude's replies occasionally used markdown
+emphasis/bullets — read literally by Piper, `*` came out as the spoken word
+"asterisk." Two layers: `SYSTEM_PROMPT` now explicitly says not to use markdown since
+replies are read aloud, and `speak()` runs a `stripMarkdownForSpeech()` regex pass on
+whatever text is actually sent to Piper (bold/italic/underscore markers, backticks,
+heading/bullet prefixes) as a code-level guarantee regardless of what the model does —
+applied only to Piper's input, not the on-screen transcript or the
+`autoListenAfterReply` question-detection, both of which keep the original text.
+Verified: the stripping function directly, in isolation, against realistic markdown
+inputs; and live, twice — asked for a markdown bulleted list (Claude declined outright,
+citing that it's a voice assistant, and answered in plain prose) and separately tried
+to force a literal `*` through by direct instruction (Claude still refused to output
+meaningless punctuation) — the system-prompt layer alone proved strong enough that the
+code-level stripper was never actually exercised live, but is independently confirmed
+correct by its own unit test and by reading how it's wired into `speak()`.
+
+**Knob brightness could show >100%** (103% observed) because `KnobLighting.qml` wrote
+a *read* from the device (`getLighting()`'s raw, unclamped 0-255 byte) straight into
+`brightness` with no ceiling, while `brightnessMax` (247, the app's own write ceiling)
+was only ever enforced on the *write* side (`Ui/Slider.qml`'s bounds). Clamped in the
+state-event handler itself — the source, not the display — so no consumer can see an
+out-of-range value; deliberately does not write a corrected value back to the device
+(no unrequested hardware action). Verified on the real device: the Settings page showed
+exactly 100% after the fix, on the same hardware that had been reading 103% before it.
+
+## 35. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1536,7 +1620,7 @@ from §26 in between — unrelated to this change, confirmed self-recovering as 
 | Daemon CLI entry | `daemon/src/bridge.js` |
 | Virtual touchscreen | `daemon/src/uinputTouch.js` |
 | Real plugin entry point (mode toggle, IPC) | `shell/Service.qml` |
-| Top-bar mode-toggle dropdown (§20) | `shell/BarWidget.qml` |
+| Top-bar mode-toggle dropdown + connection status (§20, §34) | `shell/BarWidget.qml`, `shell/Service.qml`'s `deviceConnected` |
 | PA voice agent page + orchestration daemon (§22) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`, `shell/Services/PaBridge.qml`, `daemon/src/paBridge.js` |
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
 | PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
@@ -1551,12 +1635,12 @@ from §26 in between — unrelated to this change, confirmed self-recovering as 
 | Touch hit-testing workaround | `shell/Services/TouchRouter.qml` |
 | Theme (Color.qml-equivalent) | `shell/Services/Theme.qml` |
 | Dashboard logic | `shell/Services/SystemStats.qml` |
-| Personal Care logic | `shell/Services/PersonalCareState.qml` |
+| Personal Care logic (daily reset timer, water reset — §34) | `shell/Services/PersonalCareState.qml` |
 | Pages | `shell/Pages/*.qml` |
 | Overlays | `shell/Ui/ToastOverlay.qml`, `shell/Ui/WaterAmountPicker.qml` |
 | Shared styled components | `shell/Ui/Card.qml`, `SectionLabel.qml`, `SectionSeparator.qml`, `PanelButton.qml`, `PageHeader.qml` |
 | Page chrome + page switching | `shell/Ui/PageHost.qml` |
-| Knob RGB ring color + brightness | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml` |
+| Knob RGB ring color + brightness (clamped on read-back — §34) | `shell/Services/KnobLighting.qml`, `shell/Pages/SettingsPage.qml` |
 | Screen brightness | `shell/Services/ScreenBrightness.qml` |
 | Panel microphone on/off, gated by Foxy (§32) | `shell/Services/MicState.qml`, `shell/Service.qml`/`shell.qml`'s `setOn(paState.continuousMode)` wiring |
 | Shared section-column shape (Self Care + Settings) | `shell/Ui/Section.qml` |

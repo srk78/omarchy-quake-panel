@@ -108,6 +108,18 @@ QtObject {
         running: true
     }
 
+    // Lazy rollover (see _rollOverIfNeeded's own comment) only fires from a mutation
+    // entry point — if the panel just sits idle across midnight with no water logged or
+    // pomodoro started, the displayed counts stayed stale indefinitely, since nothing
+    // else ever asked "has the day changed?". A minute-granularity poll is more than
+    // enough — this only needs to catch "a new day started," not anything time-critical.
+    property Timer _midnightCheckTimer: Timer {
+        interval: 60000
+        repeat: true
+        running: true
+        onTriggered: root._rollOverIfNeeded()
+    }
+
     // ---- water ----
     // Takes the amount in ml (chosen via WaterAmountPicker) — callers never guess an
     // amount themselves, they emit requestWaterAmount() and wait for the picker's choice.
@@ -134,6 +146,19 @@ QtObject {
     property Timer waterReminderTimer: Timer {
         repeat: false
         onTriggered: root.reminder("Time to drink some water")
+    }
+
+    // Manual reset (the Water panel's Reset button): clears today's tally only.
+    // Deliberately leaves lastDrinkAt/lastAmountMl alone — those reflect real drinking
+    // history/timing (the pomodoro-start water-reminder gate reads lastDrinkAt), not
+    // just today's count; resetting the tally shouldn't also erase "when did I last
+    // actually drink." Mirrors resetPomodoro()'s own choice to reset the session but
+    // leave todayPomodoroCount alone — same shape, opposite half reset.
+    function resetWater() {
+        root.todayWaterCount = 0
+        root.todayWaterMl = 0
+        root.waterLog = []
+        root._persist()
     }
 
     // ---- stand (fully independent of pomodoro/water) ----

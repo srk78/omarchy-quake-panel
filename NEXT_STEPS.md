@@ -3,6 +3,20 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## Six fixes from real use — done
+
+See `HISTORY.md` §34: bar-widget connection status (mode options hidden when the panel
+hardware isn't connected, a diagonal strike-through on the icon otherwise), Personal
+Care's daily counters now actually roll over with no interaction needed (a periodic
+timer, not just a lazy check on the next log/start), a Water Reset button, "nothing
+transcribed" no longer shown as a chat error after a quiet wake word, Foxy no longer
+says "asterisk" (system-prompt instruction + a code-level markdown stripper before
+Piper), and the knob-brightness percentage clamped so it can't show over 100%. All six
+verified live on the real hardware/daemon, including a real debugging detour worth
+knowing about if the bar widget ever seems unresponsive again: it lives on the right
+side of the bar, not the left (§34 has the full story of how a working feature looked
+broken for a while because of this).
+
 ## FOXY's 3D particle visualizer — done
 
 See `HISTORY.md` §30. A real `QtQuick3D`/`Particles3D` cloud on the right 1/5 of the

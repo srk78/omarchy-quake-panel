@@ -30,6 +30,11 @@ BarWidget {
   readonly property var service: bar && bar.shell ? bar.shell.serviceFor(root.moduleName) : null
   readonly property string mode: service ? service.mode : "kiosk"
   readonly property bool isKiosk: mode === "kiosk"
+  // Whether the panel's real HID device is connected (Service.qml mirrors
+  // HidBridge's own connect/disconnect signals, which already reflect real hot-plug —
+  // see its own comment). Picking either mode option does nothing useful without a
+  // real device, so this hides them and shows a disconnected state instead.
+  readonly property bool deviceConnected: service ? service.deviceConnected : false
 
   // Nerd Font glyphs, verified by actually rendering each candidate
   // codepoint with the real live font (JetBrainsMono Nerd Font — confirmed
@@ -62,8 +67,25 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: root.isKiosk ? root.kioskIcon : root.desktopIcon
-    tooltipText: "Quake Panel: " + (root.isKiosk ? "Kiosk" : "Second screen")
+    tooltipText: "Quake Panel: " + (root.deviceConnected ? (root.isKiosk ? "Kiosk" : "Second screen") : "Disconnected")
     onPressed: function (b) { root.popupOpen = !root.popupOpen }
+  }
+
+  // A diagonal strike-through over the mode icon when the panel hardware isn't
+  // connected — the same "crossed" technique Omarchy's own TailscaleIcon.qml uses for
+  // its disconnected state, reused here instead of introducing a brand-new
+  // "disconnected" glyph: a plain Rectangle has no font-rendering risk at all (see
+  // this file's own header comment on why glyph choices here get verified by actually
+  // rendering them, not guessed from a codepoint name). Confirmed live: renders
+  // correctly over the icon when deviceConnected is false.
+  Rectangle {
+    visible: !root.deviceConnected
+    anchors.centerIn: button
+    width: button.width * 0.62
+    height: Math.max(2, button.height * 0.08)
+    radius: height / 2
+    color: root.bar.foreground
+    rotation: -45
   }
 
   PopupCard {
@@ -86,8 +108,14 @@ BarWidget {
         fontFamily: root.bar.fontFamily
       }
 
+      // Picking either mode does nothing useful without a real device connected, so
+      // this whole option list is replaced by a plain "Disconnected" line below when
+      // it isn't. Bound through the model, not a `visible: false` on the Repeater
+      // itself — a Repeater's instantiated delegates are reparented to its own parent
+      // for layout, so toggling the Repeater's own `visible` does NOT hide them; an
+      // empty model creates none at all, which is what's actually wanted here.
       Repeater {
-        model: root.modeOptions
+        model: root.deviceConnected ? root.modeOptions : []
 
         delegate: BorderSurface {
           id: optionRow
@@ -158,6 +186,16 @@ BarWidget {
             }
           }
         }
+      }
+
+      Text {
+        visible: !root.deviceConnected
+        textFormat: Text.PlainText
+        text: "Disconnected"
+        color: Qt.darker(root.bar.foreground, 1.5)
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        width: parent.width
       }
     }
   }

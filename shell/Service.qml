@@ -129,6 +129,19 @@ Item {
         function onConnected(iface) { if (iface === "control") root._syncMic() }
     }
 
+    // Whether the panel's real HID device is actually connected — read by
+    // BarWidget.qml to hide the kiosk/desktop mode options (picking either does
+    // nothing useful without a real device) and show a disconnected state instead.
+    // hidBridge's connected/disconnected signals already reflect real hot-plug
+    // (Aris68Connector.js's own rescan loop reconnects automatically if the device
+    // drops), so this is just a persisted mirror of them, not new detection logic.
+    property bool deviceConnected: false
+    property Connections _deviceConnectedConn: Connections {
+        target: root.hidBridge
+        function onConnected(iface) { if (iface === "control") root.deviceConnected = true }
+        function onDisconnected(iface) { if (iface === "control") root.deviceConnected = false }
+    }
+
     property FileView modeFile: FileView {
         path: root._modePath
         watchChanges: false

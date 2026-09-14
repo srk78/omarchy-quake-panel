@@ -9,9 +9,9 @@ import "../Ui"
 // Touch buttons are provided alongside the knob gestures (press = start/pause pomodoro on
 // this page, hold = open the water-amount picker from any page). Ui/PanelButton registers
 // itself with TouchRouter — see TouchRouter.qml for why plain TapHandler alone doesn't
-// receive real touch input here. Pomodoro and Stand each also get a Reset button
-// (PersonalCareState.resetPomodoro()/resetStand()) — a second PanelButton in the same
-// row as the primary action, via Section's `button`/`button2` slots.
+// receive real touch input here. All three sections also get a Reset button
+// (PersonalCareState.resetPomodoro()/resetWater()/resetStand()) — a second PanelButton in
+// the same row as the primary action, via Section's `button`/`button2` slots.
 Item {
     id: root
     required property var personalCareState
@@ -127,6 +127,13 @@ Item {
                     icon: "󰅶"
                     text: "Log water"
                     onActivated: root.personalCareState.requestWaterAmount()
+                }
+                button2: PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: "󰜉"
+                    text: "Reset"
+                    onActivated: root.personalCareState.resetWater()
                 }
             }
 
