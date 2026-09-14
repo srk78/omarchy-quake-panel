@@ -1445,7 +1445,89 @@ connect) rather than papered over with a timing guess, and reconfirmed clean aft
 `off` at boot, `on` immediately after activating Foxy, `off` again immediately after
 deactivating.
 
-## 33. Where things live (quick map)
+## 33. "Hey Jarvis" is finally "Hey Foxy" (2026-09-14)
+
+The interim stock wake phrase from §26 is real now — a custom-trained model, and a
+different training tool than originally planned.
+
+**openWakeWord's own training notebook turned out to be badly bit-rotted.** Working
+through it cell-by-cell (per the user's own request, to see and paste each error rather
+than run it blind) surfaced a long chain of real, unrelated version-drift breaks against
+Colab's current environment: no `cp313` wheels for `piper-phonemize`/`speexdsp-ns`
+(fixed with a Python 3.11 `uv`-managed venv, since those wheels only go up to
+cp311/cp312), `tensorflow-cpu`/`onnx_tf`/`tensorflow-addons` all unavailable (confirmed
+via the actual `train.py` source that these are only used by an optional, never-invoked
+`--convert_to_tflite` path — skipped entirely, no functional loss), `datasets==2.14.6`
+broken against current `pyarrow` (`pa.PyExtensionType` removed) and then, after
+upgrading, broken a *different* way against `torchcodec`-based audio decoding a newer
+`datasets` release now requires by default (fixed by pinning `datasets==3.6.0`, the last
+release before that switch, verified against the actual GitHub history rather than
+guessed), `scipy` removing `sph_harm` (used by the long-abandoned `acoustics` package;
+pinned `scipy<1.17`), a Colab `MPLBACKEND` environment variable leaking into the
+training subprocess and breaking `matplotlib` import (overridden per-invocation), the
+`agkphysics/AudioSet` dataset repo's raw `.tar` shards replaced by Parquet entirely (404,
+rewritten to stream a fixed sample count instead), `rudraml/fma`'s own loading script
+incompatible with current streaming internals (`Cannot seek streaming HTTP file` — FMA
+dropped for this training pass rather than fought further), and finally
+`piper-sample-generator`'s own repo restructuring `generate_samples.py` into a package
+(fixed by pinning to the commit right before that change). Every one of these was
+diagnosed from the real upstream source before proposing a fix — not guessed — but the
+sheer number of independent breaks in one inherited notebook made it clear this
+particular tool had drifted too far from anything still routinely exercised by its own
+maintainers.
+
+**Training moved to a different, actively-maintained tool**: nanowakeword
+(`github.com/arcosoph/nanowakeword`), via its own Colab notebook — the user's own find,
+after this session flagged the version-drift wall as a real cost/benefit question worth
+stopping on rather than continuing to fight cell-by-cell.
+
+**This changed the integration, not just the source of the model file.** nanowakeword
+has its own inference API (`nanowakeword.NanoInterpreter`), not openWakeWord's
+(`openwakeword.model.Model`) — confirmed by reading its actual source
+(`nanointerpreter.py`), not just its README example. `daemon/src/paTools/wakeword.py`
+was rewritten accordingly: `from nanowakeword import NanoInterpreter`,
+`NanoInterpreter.load_model(MODEL_PATH)` in fully-local single-model mode (no
+cascade/gate, no remote verifier — those exist for genuinely low-power edge devices,
+not this machine's ordinary laptop CPU), and `interpreter.predict(frame).score` in place
+of `model.predict(frame).get(MODEL_KEY, 0.0)` — simpler than before, since
+`DetectionResult.score` already resolves to the one loaded model with no key lookup
+needed. `MODEL_KEY`/`OQP_PA_WAKEWORD_MODEL_KEY` are gone (nothing to key). A plain `pip
+install nanowakeword` pulls in only `numpy`+`onnxruntime` as hard dependencies (verified
+via its PyPI metadata) — training-only dependencies (`torch`, `scipy`, `acoustics`,
+etc.) sit behind a `[train]` extra never installed here, keeping the daemon's own
+inference-time footprint as light as `openwakeword` was.
+
+**The model file itself is committed to the repo**, not kept as an external download —
+`daemon/src/paTools/models/hey_foxy.onnx` (266KB), alongside a distilled `hey_foxy_lite.onnx`
+(a "gate" model for nanowakeword's optional low-power cascade mode — not used by this
+deployment, kept in case a future low-power satellite mic ever wants it) and
+`hey_foxy.pt` (the raw PyTorch checkpoint, kept only in case retraining/re-exporting is
+ever needed — not used by the runtime). All three are small enough that this cost
+nothing. Unlike Piper's voice model (a generic, anonymously re-downloadable asset,
+deliberately kept outside the repo), this is a one-of-a-kind artifact from the user's
+own training run that nobody could regenerate without redoing all of the above — the
+user's own call, and the right one. `wakeword.py`'s `MODEL_PATH` now resolves relative
+to the script itself by default (`OQP_PA_WAKEWORD_MODEL` still overrides it for anyone
+who trains a different phrase later), so a fresh clone just works with no separate
+download step.
+
+**One real first-run behavior worth knowing about**: `NanoInterpreter.load_model()`
+lazily downloads two small shared preprocessing models (`melspectrogram.onnx`,
+`embedding_model.onnx`, ~2.4MB total) into the `nanowakeword` package's own install
+directory the first time it ever runs on a machine — confirmed live. Needs internet
+access once; cached under site-packages after that, surviving every later run.
+
+**Verified live, real acoustic loopback, twice**: a real "Hey Foxy" utterance (Piper TTS
+— the same legitimate-signal reasoning as §26's "Hey Jarvis" test, and this model was
+itself trained on Piper-synthesized data, so if anything this is a more representative
+test than before) correctly fired a real wake event through the actual running plugin,
+first alone (correctly producing "Nothing transcribed" with no follow-up spoken) and
+then with a real follow-up question — "What is 2 plus 2?" — correctly transcribed and
+answered "2 plus 2 is 4." by the real running daemon end to end. The wake-word listener
+hit and recovered from the same pre-existing, already-documented transient ALSA race
+from §26 in between — unrelated to this change, confirmed self-recovering as before.
+
+## 34. Where things live (quick map)
 
 | Thing | Path |
 |---|---|
@@ -1459,7 +1541,7 @@ deactivating.
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
 | PA-scoped Voxtype config (pins the panel's own mic) | `ops/voxtype/pa.example.toml`, live copy at `~/.config/voxtype/pa.toml` |
 | PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
-| PA continuous "wake word" mode (§26, §31) | `daemon/src/paTools/wakeword.py` (model swap via `OQP_PA_WAKEWORD_MODEL`/`_MODEL_KEY`/`_THRESHOLD`), `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
+| PA "Hey Foxy" wake-word mode (§26, §31, §33) | `daemon/src/paTools/wakeword.py` (`nanowakeword.NanoInterpreter`, model at `daemon/src/paTools/models/hey_foxy.onnx`, overridable via `OQP_PA_WAKEWORD_MODEL`/`_THRESHOLD`), `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | PA Home Assistant control (§29) | `daemon/src/paTools/server.js`'s HA tools, `daemon/src/paBridge.js`'s `OQP_PA_TURN_ID`; credentials at `~/.config/omarchy-quake-panel/config.json` (not in the repo) |
 | FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
 | FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |

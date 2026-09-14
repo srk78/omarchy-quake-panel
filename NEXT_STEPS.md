@@ -34,45 +34,29 @@ across multiple turns and auto-scrolling to the newest line.
   confirmed working both times. Worth a cleaner real test — or just real usage — to see
   a full back-and-forth complete without the timing miss.
 
-## Replacing "Hey Jarvis" with "Hey Foxy" — training in progress, integration plan changed
+## "Hey Jarvis" → "Hey Foxy" — done
 
-The original plan (see `HISTORY.md` §31, `daemon/src/paTools/wakeword.py`'s
-`OQP_PA_WAKEWORD_MODEL`/`_MODEL_KEY`/`_THRESHOLD` env vars) assumed training with
-openWakeWord's own notebook, producing a model directly loadable by the `openwakeword`
-Python package already used in `wakeword.py`. That notebook turned out to be badly
-bit-rotted against current library versions (Python 3.13 wheel gaps, removed scipy/
-pyarrow APIs, a restructured `piper-sample-generator` repo, `datasets`' torchcodec
-switch, moved-source dataset repos — a long, fully-diagnosed chain, not abandoned for
-lack of trying) and after real user frustration with the back-and-forth, training moved
-to a different, actively-maintained tool: **nanowakeword**
-(`github.com/arcosoph/nanowakeword`), via its own Colab notebook.
+See `HISTORY.md` §33 for the full story, including a long, fully-diagnosed chain of
+openWakeWord's own training notebook being bit-rotted against current library versions
+(not abandoned for lack of trying) that led to training with a different, actively
+maintained tool instead — **nanowakeword** (`github.com/arcosoph/nanowakeword`). That
+changed the integration, not just where the model came from: `wakeword.py` now uses
+`nanowakeword.NanoInterpreter` instead of `openwakeword.model.Model`. The trained model
+is committed to the repo at `daemon/src/paTools/models/hey_foxy.onnx` (a one-of-a-kind
+artifact from the user's own training run, unlike Piper's generic re-downloadable voice
+model), with `hey_foxy_lite.onnx` (an unused-for-now low-power gate model) and
+`hey_foxy.pt` (the raw checkpoint, kept in case retraining is needed later) alongside
+it. `nanowakeword` needs `pip install --user nanowakeword` — README's setup steps need
+a pass to mention this alongside the existing `openwakeword`/`sounddevice` install
+line (openWakeWord itself is no longer imported anywhere and could be `pip uninstall`'d,
+though leaving it installed is harmless).
 
-**This changes the integration, not just the model file**: nanowakeword has its own
-inference API (`from nanowakeword import NanoInterpreter`), not openWakeWord's
-(`openwakeword.model.Model`). The resulting `.onnx` file is not a drop-in swap via the
-existing env vars — `wakeword.py` needs an actual code change once the model exists:
-swap its detection loop from `openwakeword.model.Model` to `nanowakeword`'s
-`NanoInterpreter`, and add `nanowakeword` as a new pip dependency alongside
-`openwakeword`/`sounddevice`.
-
-**Decided**: unlike Piper's voice model (a generic, publicly re-downloadable asset kept
-outside the repo), this trained model is a one-of-a-kind artifact from the user's own
-training run that nobody else could regenerate without redoing the whole process — so
-it gets **committed to the repo** at `daemon/src/paTools/models/hey_foxy.onnx` (small —
-low single-digit MB at most, nothing like Piper's model), with `wakeword.py`'s default
-model path resolved relative to the script itself so a fresh clone just works with no
-separate download step. The `OQP_PA_WAKEWORD_MODEL`-style env var override stays
-available for anyone who wants to swap in a different trained phrase later.
-
-Still needs, in order:
-
-1. The `.onnx` file finishes training (in progress as of this session) and lands at
-   `daemon/src/paTools/models/hey_foxy.onnx`.
-2. `wakeword.py`'s rewrite to use `nanowakeword`'s `NanoInterpreter` instead of
-   `openwakeword.model.Model`, and `daemon/package.json`'s new dependency.
-3. Real acoustic verification exactly like `HISTORY.md` §26's original "Hey Jarvis"
-   test, just with the new phrase, before updating the remaining "Hey Jarvis" mentions
-   in code comments/README/HISTORY.
+**Verified live, real acoustic loopback**: a real "Hey Foxy" utterance correctly fired
+a wake event through the actual running plugin, and a full turn — "Hey Foxy" + "What is
+2 plus 2?" — was correctly transcribed and answered ("2 plus 2 is 4.") end to end by the
+real daemon. Not yet tried: a real human voice saying "Hey Foxy" (every test so far used
+Piper-synthesized speech for the wake phrase itself, same caveat this project has always
+had for wake-word testing — see `HISTORY.md` §26).
 
 ## PA voice agent — Phases A–D done
 

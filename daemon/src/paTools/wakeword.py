@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-wakeword.py — spots "Hey Jarvis" (the interim stock phrase for "Hey Foxy", see
-HISTORY.md's Phase C section for why) on the panel's own mic, then exits.
+wakeword.py — spots "Hey Foxy" on the panel's own mic, then exits.
 
 Deliberately does ONE job and stops: paBridge.js runs this only while the mic isn't
 needed for anything else, and kills it (or lets it exit itself, right here) the moment
@@ -16,8 +15,11 @@ stdout: one JSON object per line —
   {"event": "wake", "score": 0.87}
   {"event": "error", "message": "..."}
 
-MIT-licensed: pure orchestration glue, no device protocol, no model weights of its own
-(openWakeWord ships its own pretrained models — see its own license for those).
+MIT-licensed: pure orchestration glue, no device protocol, no model weights of its own.
+The bundled model (models/hey_foxy.onnx) was trained via nanowakeword's own Colab
+notebook (github.com/arcosoph/nanowakeword) — see HISTORY.md for why that tool, not
+openWakeWord's own training notebook, ended up producing it, and its own Apache-2.0
+license for the training code/library this model was made with.
 """
 import json
 import os
@@ -26,21 +28,20 @@ import time
 
 import numpy as np
 import sounddevice as sd
-import openwakeword
-from openwakeword.model import Model
+from nanowakeword import NanoInterpreter
 
-# Env-overridable so swapping in a real trained "Hey Foxy" model (see HISTORY.md — needs
-# openWakeWord's own Colab training notebook, a manual step) is a config change, not a
-# code edit — same pattern as paBridge.js's PIPER_MODEL/OQP_PA_SPEAKER_SINK. The
-# defaults are the stock "Hey Jarvis" pretrained model, unchanged until all three are set.
+# A one-of-a-kind trained artifact (nobody else could regenerate it without redoing the
+# whole training process), unlike Piper's voice model — so it's committed to the repo
+# rather than kept as an external download, colocated with this script. Still
+# env-overridable so swapping in a different trained phrase is a config change, not a
+# code edit — same pattern as paBridge.js's PIPER_MODEL/OQP_PA_SPEAKER_SINK.
 MODEL_PATH = os.environ.get(
     "OQP_PA_WAKEWORD_MODEL",
-    os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models", "hey_jarvis_v0.1.onnx"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "hey_foxy.onnx"),
 )
-MODEL_KEY = os.environ.get("OQP_PA_WAKEWORD_MODEL_KEY", "hey_jarvis_v0.1")
-THRESHOLD = float(os.environ.get("OQP_PA_WAKEWORD_THRESHOLD", "0.5"))  # openWakeWord's own documented default for its pretrained models
+THRESHOLD = float(os.environ.get("OQP_PA_WAKEWORD_THRESHOLD", "0.5"))
 SAMPLE_RATE = 16000
-FRAME_SAMPLES = 1280  # 80ms at 16kHz — openWakeWord's own expected frame size
+FRAME_SAMPLES = 1280  # 80ms at 16kHz — nanowakeword's own expected frame size (matches openWakeWord's)
 # Matched by substring, not exact name or PortAudio index — same philosophy as
 # ops/voxtype/pa.example.toml pinning the mic by its stable ALSA card name rather than
 # an index that can shift. This is the panel's separate USB audio codec (see
@@ -86,15 +87,19 @@ def main():
         out({"event": "error", "message": f"no input device matching '{DEVICE_NAME_MATCH}'"})
         sys.exit(1)
 
-    model = Model(wakeword_model_paths=[MODEL_PATH])
+    # Fully local, single-model mode (no cascade/gate, no remote verifier) — this
+    # machine is an ordinary laptop-class CPU, not the low-power edge device the
+    # cascade/remote-verifier modes exist for; a plain single model is nanowakeword's
+    # own recommended shape for "common use" (see its README's deployment modes table).
+    interpreter = NanoInterpreter.load_model(MODEL_PATH)
 
     with open_stream(device) as stream:
         out({"event": "ready"})
         while True:
             chunk, _overflowed = stream.read(FRAME_SAMPLES)
             frame = chunk.reshape(-1)
-            prediction = model.predict(frame)
-            score = prediction.get(MODEL_KEY, 0.0)
+            result = interpreter.predict(frame)
+            score = result.score
             if score >= THRESHOLD:
                 out({"event": "wake", "score": float(score)})
                 return

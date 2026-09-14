@@ -33,13 +33,12 @@
  * so this pins the panel's own mic explicitly rather than inheriting the user's everyday
  * dictation config's device/output settings.
  *
- * Continuous mode (paTools/wakeword.py, Python + openWakeWord) spots the wake phrase on
+ * Continuous mode (paTools/wakeword.py, Python + nanowakeword) spots the wake phrase on
  * the SAME mic and then exits immediately — it never runs at the same time as Voxtype's
  * own recording, sidestepping any question of whether this machine's ALSA setup actually
- * lets two processes capture the same device at once. The wake word itself is the stock
- * "Hey Jarvis" model, not a trained "Hey Foxy" — see HISTORY.md for why (custom wake-word
- * training needs Google Colab, a whole separate manual undertaking); "Foxy" is still the
- * spoken persona, only the trigger phrase differs for now.
+ * lets two processes capture the same device at once. The wake word is a real
+ * custom-trained "Hey Foxy" model (see HISTORY.md §33 for the training story, and why
+ * nanowakeword rather than openWakeWord's own training tooling).
  */
 const readline = require('readline');
 const path = require('path');

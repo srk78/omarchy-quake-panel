@@ -135,18 +135,15 @@ built from:
   `cancel_pending_action`; see `HISTORY.md` §29 for the code-enforced turn-ID check that
   makes the gate real rather than just prompted-for). Replies are spoken aloud via
   Piper. There is exactly one on/off control — a knob press or the on-screen power
-  button — which arms continuous "Hey Jarvis" wake-word listening (a small pulsing dot
-  in the shared page header shows it's armed, on every page, not just this one). Off,
-  the page shows nothing but the power button; on, it shows the conversation (a real
-  scrolling transcript, not just the last exchange) plus the visualizer below. Foxy
-  also auto-listens for a reply — skipping the wake word — right after asking a
-  question, so a back-and-forth doesn't need "Hey Jarvis" repeated every turn. "Hey
-  Jarvis" is a deliberate stand-in for "Hey Foxy," which needs custom wake-word training
-  (Google Colab — a separate manual step, see `HISTORY.md` §26; the model path is now
-  `OQP_PA_WAKEWORD_MODEL`-overridable, see §31, so swapping it in is a config change).
-  See `HISTORY.md` §22/§24/§26/§29/§31 for the full design, what's verified, and the
-  non-obvious gotchas (`claude -p` needs `--system-prompt` + `--allowedTools` to
-  actually call tools non-interactively; a wake-word listener orphan can survive a
+  button — which arms continuous "Hey Foxy" wake-word listening, a real custom-trained
+  model (a small pulsing dot in the shared page header shows it's armed, on every page,
+  not just this one). Off, the page shows nothing but the power button; on, it shows
+  the conversation (a real scrolling transcript, not just the last exchange) plus the
+  visualizer below. Foxy also auto-listens for a reply — skipping the wake word — right
+  after asking a question, so a back-and-forth doesn't need "Hey Foxy" repeated every
+  turn. See `HISTORY.md` §22/§24/§26/§29/§31/§33 for the full design, what's verified,
+  and the non-obvious gotchas (`claude -p` needs `--system-prompt` + `--allowedTools`
+  to actually call tools non-interactively; a wake-word listener orphan can survive a
   shell restart and needs `SIGKILL`).
 
   The right 1/5 of this page is a real 3D audio-reactive particle cloud
@@ -166,9 +163,15 @@ built from:
     en_US-lessac-medium --download-dir ~/.local/share/piper/voices`. A different
     machine's speaker sink name (`pactl list short sinks`) goes in
     `OQP_PA_SPEAKER_SINK` if it differs from `daemon/src/paBridge.js`'s default.
-  - **openWakeWord** — `pip install --user openwakeword sounddevice` (pure Python +
-    ONNX, no compiled-extension packaging needed the way Piper has); its pretrained
-    "Hey Jarvis" model ships inside the package itself, no separate download step.
+  - **nanowakeword** — `pip install --user nanowakeword sounddevice` (pure Python +
+    ONNX, no compiled-extension packaging needed the way Piper has). The trained "Hey
+    Foxy" model ships in this repo (`daemon/src/paTools/models/hey_foxy.onnx`), not
+    downloaded separately — but the *first* run needs internet access once, to let
+    `nanowakeword` fetch its own shared mel-spectrogram/embedding models into its
+    package install directory (cached there for every run after). See `HISTORY.md` §33
+    for why this is `nanowakeword`, not `openwakeword` — a real, fully-diagnosed chain
+    of version-drift breaks in openWakeWord's own training notebook, not a casual
+    swap.
   - **Home Assistant** (optional — only needed for smart-home control) — copy
     `config/config.example.json` to `~/.config/omarchy-quake-panel/config.json` and
     fill in `homeAssistant.url` (the bare base URL, e.g. `http://homeassistant.local:8123`
