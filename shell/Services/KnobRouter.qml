@@ -48,7 +48,14 @@ QtObject {
         } else if (event.type === "press") {
             var action = root.modeTable[root.currentPageIndex].press
             if (action === "pomodoroToggle") personalCareState.togglePomodoro()
-            else if (action === "foxyToggle") paState.toggleContinuousMode()
+            else if (action === "foxyToggle") {
+                // Context-sensitive: a knob press mid-turn cancels it (listening, thinking,
+                // or speaking) rather than always fully toggling Foxy off — lets the user
+                // interrupt a reply without losing continuous mode itself. The on-screen
+                // power button keeps its simpler always-off behavior; this is knob-only.
+                if (paState.busy) paState.cancelTurn()
+                else paState.toggleContinuousMode()
+            }
             // "noop" on System/Settings intentionally does nothing in v1
         }
     }

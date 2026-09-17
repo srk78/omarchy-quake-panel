@@ -2,11 +2,13 @@
 'use strict';
 /*
  * paBridge.js — orchestrates the "PA" voice-agent turn loop: Voxtype (local speech-to-
- * text) -> `claude` CLI (a real agent, given tools via paTools/server.js) -> Piper
- * (local text-to-speech) -> a spoken/shown reply. See HISTORY.md for the design
- * brainstorm this implements — Phase A (manual push-to-talk), Phase B (spoken replies),
- * and Phase C (this file's continuous "wake word" mode) are done; Home Assistant control
- * (Phase D) is not.
+ * text) -> Hermes, a self-hosted agent harness reached over Tailscale via SSH (see
+ * askHermes()), falling back to the `claude` CLI (a real agent, given tools via
+ * paTools/server.js) when Hermes is unreachable -> Piper (local text-to-speech) -> a
+ * spoken/shown reply. See HISTORY.md for the design brainstorm this implements — Phase A
+ * (manual push-to-talk), Phase B (spoken replies), Phase C (continuous "wake word" mode),
+ * and Phase D (Home Assistant control, Claude-fallback-path only) are done; the Hermes
+ * primary brain is its own later addition (see HISTORY.md's Hermes section).
  *
  * A second, independent daemon process from bridge.js/HidBridge.qml on purpose: this one
  * shells out to much slower, heavier, more experimental things (an LLM CLI call can take
@@ -87,6 +89,43 @@ const WAKEWORD_SCRIPT = path.join(__dirname, 'paTools', 'wakeword.py');
 const WAKEWORD_PYTHON = process.env.OQP_PA_WAKEWORD_PYTHON || 'python3';
 const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '6000', 10);
 
+// Foxy's primary brain: Stefan's own self-hosted agent harness, "Hermes," reached over
+// Tailscale via plain SSH + the `hermes` CLI — not a new network protocol. Hermes is
+// CLI-driven and structurally close to `claude` itself (profiles, sessions, one-shot
+// invocation), so this mirrors askClaude() below almost exactly, just a different binary/
+// host. Hermes also documents a WebSocket "connector" protocol for platform integrations,
+// but it's marked experimental with no accessible reference implementation (its own repo,
+// NousResearch/gateway-gateway, isn't public — confirmed 404) — SSH+CLI sidesteps
+// reverse-engineering that from a doc description alone.
+const HERMES_SSH_HOST = process.env.OQP_PA_HERMES_HOST || 'hermes';
+const HERMES_SSH_USER = process.env.OQP_PA_HERMES_SSH_USER || 'stefan';
+const HERMES_BIN = process.env.OQP_PA_HERMES_BIN || '/home/stefan/.local/bin/hermes';
+// A dedicated profile (not "default") so Foxy's own conversation history/config is
+// isolated from whatever else Hermes is used for (its own Discord/Telegram gateway, the
+// user's own direct `hermes chat` use). Foxy's voice-friendly persona (formerly this
+// file's own SYSTEM_PROMPT below, now Hermes-side) lives in this profile's own SOUL.md —
+// see HISTORY.md for the exact wording ported over.
+const HERMES_PROFILE = process.env.OQP_PA_HERMES_PROFILE || 'foxy';
+const HERMES_CONNECT_TIMEOUT_S = parseInt(process.env.OQP_PA_HERMES_CONNECT_TIMEOUT_S || '8', 10);
+const HERMES_TIMEOUT_MS = parseInt(process.env.OQP_PA_HERMES_TIMEOUT_MS || '60000', 10);
+
+// Same file paTools/server.js's remember_fact/forget_fact tools write to — no shared
+// module between this process and that one, just an agreed-upon path/shape, matching
+// this project's existing style. Read fresh on every turn (not cached) so a fact saved
+// moments ago by the same conversation is already visible on the very next call.
+const MEMORY_FILE = path.join(os.homedir(), '.local', 'state', 'omarchy-quake-panel', 'foxy-memory.json');
+
+// Passive recall: baked into every turn's system prompt rather than requiring the model
+// to spend a tool call fetching it first. Returns '' when there's nothing remembered
+// yet, so callers can just concatenate without a conditional.
+function loadMemoryForPrompt() {
+  let entries;
+  try { entries = JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8')); } catch (e) { return ''; }
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+  const lines = entries.map(e => '- ' + e.text).join('\n');
+  return '\n\nKnown facts about the user, remembered from earlier conversations:\n' + lines;
+}
+
 // Every tool the "quake-panel" MCP server exposes (paTools/server.js), fully qualified
 // as `mcp__<serverName>__<toolName>` — confirmed live to be the exact name Claude Code's
 // permission system wants (see HISTORY.md). Passed to --allowedTools below: without it,
@@ -95,6 +134,9 @@ const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '60
 // new tool's qualified name here as later phases add more.
 const ALLOWED_TOOLS = [
   'mcp__quake-panel__start_pomodoro',
+  'mcp__quake-panel__remember_fact',
+  'mcp__quake-panel__forget_fact',
+  'mcp__quake-panel__list_remembered_facts',
   'mcp__quake-panel__list_ha_entities',
   'mcp__quake-panel__propose_ha_action',
   'mcp__quake-panel__confirm_pending_action',
@@ -126,6 +168,11 @@ const SYSTEM_PROMPT = [
   "Never call propose_ha_action and confirm_pending_action in the same response — the",
   "user must have an actual chance to say yes first. This applies even if you are very",
   "confident about the request.",
+  "",
+  "If the user tells you something worth remembering for later — a preference, a fact",
+  "about their routine or home — call remember_fact to save it. No need to ask",
+  "permission first for ordinary personal facts. If they correct something you got",
+  "wrong or ask you to forget it, call forget_fact.",
 ].join(' ');
 
 // Written once at startup rather than checked into the repo: the MCP server's absolute
@@ -136,11 +183,29 @@ function writeMcpConfig() {
   fs.writeFileSync(MCP_CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
-let sessionId = null;
+let claudeSessionId = null; // fallback-path session id — see askClaude()'s own comment
 let turnInFlight = false;
 let continuousMode = false;
 let currentStatus = 'idle';
 let wakeProc = null;
+// The one long-running child process representing "the thing currently in flight" for
+// the transcribing/thinking/speaking phases — set right before each spawn/execFile call,
+// cleared (only if it still points at that same child, avoiding a race with whatever the
+// next turn already started) the moment that call's own completion callback fires.
+// cancelTurn() kills whatever's here for those phases; "listening" doesn't use this at
+// all (see cancelTurn()'s own comment on why).
+let activeChild = null;
+// Set by cancelTurn() right before it kills activeChild, so that killed process's own
+// completion callback — which still fires, just as an error/non-zero exit — recognizes
+// the turn was already deliberately ended and skips re-processing (no double
+// finishTurn(), no spurious "failed" error for an intentional cancel). Cleared at the
+// start of every fresh turn.
+let turnWasCancelled = false;
+// Hermes' own session id (its "session_id: <id>" line, read off stderr — see askHermes()),
+// analogous to claudeSessionId above but for the primary/Hermes path. Passing it back as
+// --resume continues that conversation; omitting it (after a reset) starts fresh. Hermes
+// keeps the actual conversation history on its own side — this file only tracks the id.
+let hermesSessionId = null;
 // Given to each `claude -p` invocation as OQP_PA_TURN_ID (see askClaude), and checked by
 // paTools/server.js's confirm_pending_action against the turn ID stored at propose time
 // — see this file's own header comment on why a code-enforced check exists here at all
@@ -158,6 +223,28 @@ let continuousTurnTimer = null;
 // question), the turn after that goes back to normal wake-word-gated listening rather
 // than leaving the mic hot indefinitely.
 let autoListenAfterReply = false;
+// A long-lived `--resume` session only ever grows — every turn re-sends its whole
+// history, so an old conversation left running for hours is a real, untuned cost/
+// latency concern (see NEXT_STEPS.md). Reset on two triggers: explicitly turning Foxy
+// off (stopContinuous — the transcript already visually resets then, PaState.qml's
+// setContinuousMode(false); this makes the actual conversation memory match that),
+// and this idle timer, re-armed at the end of every turn while continuousMode is on.
+// Safe to reset aggressively now that persistent memory (paTools/server.js's
+// remember_fact) exists separately — anything the user actually wanted kept survives
+// in foxy-memory.json regardless of what happens to the raw session.
+const SESSION_IDLE_RESET_MS = parseInt(process.env.OQP_PA_SESSION_IDLE_RESET_MS || String(30 * 60 * 1000), 10);
+let sessionIdleTimer = null;
+function _armSessionIdleReset() {
+  if (sessionIdleTimer) clearTimeout(sessionIdleTimer);
+  if (SESSION_IDLE_RESET_MS <= 0) return; // 0 or negative disables the idle reset entirely
+  sessionIdleTimer = setTimeout(() => {
+    console.error(`Session idle-reset after ${SESSION_IDLE_RESET_MS}ms of inactivity`);
+    resetSession();
+  }, SESSION_IDLE_RESET_MS);
+}
+function _clearSessionIdleReset() {
+  if (sessionIdleTimer) { clearTimeout(sessionIdleTimer); sessionIdleTimer = null; }
+}
 
 function emitState() { out({ t: 'state', state: { status: currentStatus, continuous: continuousMode } }); }
 function setStatus(status) { currentStatus = status; emitState(); }
@@ -178,6 +265,7 @@ function finishTurn() {
   turnInFlight = false;
   setStatus('idle');
   if (!continuousMode) return;
+  _armSessionIdleReset();
   if (autoListenAfterReply) {
     // Skip the wake word entirely — reuse the exact fixed-window recording mechanics
     // the wake handler itself uses (startTurn() + a timer that force-ends it), just
@@ -196,6 +284,7 @@ function startTurn() {
   if (turnInFlight) return;
   stopListener(); // never share the mic with the wake-word listener mid-turn
   turnInFlight = true;
+  turnWasCancelled = false;
   autoListenAfterReply = false; // defensive — a fresh turn should never carry over a stale intent from before
   try { fs.unlinkSync(TRANSCRIPT_FILE); } catch (e) { /* fine if it didn't exist yet */ }
   setStatus('listening');
@@ -210,7 +299,9 @@ function endTurn() {
   if (!turnInFlight) return;
   if (continuousTurnTimer) { clearTimeout(continuousTurnTimer); continuousTurnTimer = null; }
   setStatus('transcribing');
-  execFile('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'stop', '--wait', '--json', '--timeout', '20'], (err, stdout, stderr) => {
+  const child = execFile('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'stop', '--wait', '--json', '--timeout', '20'], (err, stdout, stderr) => {
+    if (activeChild === child) activeChild = null;
+    if (turnWasCancelled) return; // cancelTurn() already killed this and called finishTurn()
     // Exit codes 3 (nothing to transcribe) and 4 (timed out) are documented, ordinary
     // outcomes for "the user didn't actually say anything" — most often a continuous-
     // mode turn whose fixed recording window caught only silence after the wake word.
@@ -239,14 +330,30 @@ function endTurn() {
       return;
     }
     out({ t: 'transcript', text });
-    askClaude(text);
+    askHermes(text);
   });
+  activeChild = child;
 }
 
 function cancelTurn() {
+  if (!turnInFlight) return; // idle — nothing to cancel
   if (continuousTurnTimer) { clearTimeout(continuousTurnTimer); continuousTurnTimer = null; }
   autoListenAfterReply = false; // a cancelled turn never reaches a reply — nothing to auto-follow-up on
-  execFile('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'cancel'], () => finishTurn());
+  if (currentStatus === 'listening') {
+    // Voxtype's own recording is a background service, not tied to any child-process
+    // handle of ours (see this file's header comment) — an explicit cancel command is
+    // the only thing that actually stops it, not killing a process on our side.
+    execFile('voxtype', ['-c', VOXTYPE_CONFIG, 'record', 'cancel'], () => finishTurn());
+    return;
+  }
+  // transcribing/thinking/speaking: activeChild is a real child process we hold a handle
+  // to — kill it directly. turnWasCancelled stops its own completion callback (which
+  // still fires after a kill, just as an error/non-zero exit) from re-processing a turn
+  // this has already finished.
+  turnWasCancelled = true;
+  if (currentStatus === 'speaking') stopAudioLevelPlayback(); // settle the visualizer immediately rather than waiting on the killed player's own callback
+  if (activeChild) { activeChild.kill('SIGKILL'); activeChild = null; }
+  finishTurn();
 }
 
 // --- continuous "wake word" mode (Phase C) ---------------------------------------
@@ -317,10 +424,83 @@ function startContinuous() {
 function stopContinuous() {
   continuousMode = false;
   stopListener();
+  _clearSessionIdleReset();
+  resetSession(); // a fresh conversation next time Foxy turns on — see SESSION_IDLE_RESET_MS's own comment
   emitState();
 }
 
-function askClaude(promptText) {
+// Confirmed live: killing the LOCAL ssh client (SIGKILL — what cancelTurn() does to
+// activeChild) does NOT kill the REMOTE hermes process. SSH without a pseudo-tty doesn't
+// propagate the hangup, so the remote `hermes chat` invocation just keeps running,
+// abandoned, burning the Pi's CPU/GPU on a reply nobody will ever hear. This is the
+// fix: a best-effort, fire-and-forget second SSH call targeting exactly this turn's own
+// unique remote prompt-file path (never ambiguous with any other turn, past or
+// concurrent). Nothing reacts to its result either way — a cancel has already ended the
+// turn locally regardless of whether this cleanup actually lands.
+function killRemoteHermesTurn(remoteTmpPath) {
+  execFile('ssh', [
+    '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${HERMES_CONNECT_TIMEOUT_S}`,
+    `${HERMES_SSH_USER}@${HERMES_SSH_HOST}`,
+    'pkill', '-9', '-f', remoteTmpPath,
+  ], () => { /* best-effort cleanup only */ });
+}
+
+// Foxy's primary brain. promptText is written to a remote temp file rather than ever
+// being interpolated into the SSH command string — confirmed live that hermes chat's own
+// --query-file "is safe for arbitrary text: nothing is shell-interpreted, so quotes,
+// $(...), and backticks are preserved verbatim," which matters here because promptText is
+// real speech-to-text output the user doesn't control the shape of. The file itself is
+// written by piping promptText over this SAME ssh connection's stdin to `cat >
+// <remoteTmpPath>` — one round trip, and the prompt's bytes never appear on any command
+// line, local or remote.
+function askHermes(promptText) {
+  setStatus('thinking');
+  const remoteTmpPath = `/tmp/oqp-hermes-turn-${Date.now()}.txt`;
+  // hermesSessionId only ever comes from Hermes' own stderr (see below), never from user
+  // input — but it still gets validated before being concatenated into the remote command
+  // string, on principle, rather than trusted just because today's observed format
+  // (e.g. "20260917_193541_f98de1") happens to look safe.
+  const resumeArg = (hermesSessionId && /^[A-Za-z0-9_.:-]+$/.test(hermesSessionId))
+    ? ` --resume ${hermesSessionId}`
+    : '';
+  const remoteCommand = `cat > ${remoteTmpPath} && ${HERMES_BIN} chat --query-file ${remoteTmpPath} `
+    + `--oneshot -Q -p ${HERMES_PROFILE} --source tool${resumeArg}; rm -f ${remoteTmpPath}`;
+  const child = execFile('ssh', [
+    '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${HERMES_CONNECT_TIMEOUT_S}`,
+    `${HERMES_SSH_USER}@${HERMES_SSH_HOST}`,
+    remoteCommand,
+  ], { timeout: HERMES_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (activeChild === child) activeChild = null;
+    if (turnWasCancelled) { killRemoteHermesTurn(remoteTmpPath); return; }
+    if (err) {
+      // Anything here — a down Pi, a dead tailnet link, ssh's own ConnectTimeout firing,
+      // hermes itself erroring — looks the same from this side: unreachable. Falls back
+      // to the exact same claude CLI path this file used exclusively before Hermes
+      // existed, so pomodoro/memory/HA tools even keep working during a fallback.
+      console.error(`Hermes unreachable, falling back to Claude: ${err.message}${stderr ? ' - ' + stderr.trim() : ''}`);
+      askClaude(promptText, true);
+      return;
+    }
+    // Confirmed live: hermes chat -Q's plain-text stdout is exactly the reply and nothing
+    // else — the "session_id: <id>" line (and everything else: banners, warnings, "session
+    // found but has no messages" notices) rides stderr instead.
+    const m = /session_id:\s*(\S+)/.exec(stderr);
+    if (m) hermesSessionId = m[1];
+    const replyText = stdout.trim();
+    autoListenAfterReply = /\?["')\]]*$/.test(replyText.trim());
+    out({ t: 'reply', text: replyText });
+    speak(replyText);
+  });
+  child.stdin.write(promptText);
+  child.stdin.end();
+  activeChild = child;
+}
+
+// The original brain, kept exactly as it was — now doubling as Foxy's fallback whenever
+// Hermes (askHermes() above) is unreachable. isFallback prepends a short spoken note so a
+// fallback is never silent, per the user's own explicit requirement ("use wrapped Claude
+// as fallback, but mention so").
+function askClaude(promptText, isFallback) {
   setStatus('thinking');
   turnCounter += 1;
   const args = [
@@ -330,9 +510,9 @@ function askClaude(promptText) {
     '--allowedTools', ALLOWED_TOOLS.join(','),
     '--output-format', 'json',
     '--model', CLAUDE_MODEL,
-    '--system-prompt', SYSTEM_PROMPT,
+    '--system-prompt', SYSTEM_PROMPT + loadMemoryForPrompt(),
   ];
-  if (sessionId) args.push('--resume', sessionId);
+  if (claudeSessionId) args.push('--resume', claudeSessionId);
   // cwd deliberately NOT this repo: running from inside it pulls in this project's own
   // CLAUDE.md/skills as unrelated context on every turn (confirmed live — a throwaway
   // test call from the repo root cache-primed over 10k tokens of project context it
@@ -340,7 +520,9 @@ function askClaude(promptText) {
   // OQP_PA_TURN_ID flows to the MCP server subprocess (server.js) this invocation spawns
   // — see turnCounter's own comment for what it's for.
   const env = Object.assign({}, process.env, { OQP_PA_TURN_ID: String(turnCounter) });
-  execFile('claude', args, { cwd: os.homedir(), env, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
+  const child = execFile('claude', args, { cwd: os.homedir(), env, maxBuffer: 10 * 1024 * 1024, timeout: 60000 }, (err, stdout, stderr) => {
+    if (activeChild === child) activeChild = null;
+    if (turnWasCancelled) return; // cancelTurn() already killed this and called finishTurn()
     if (err) {
       out({ t: 'error', message: `claude CLI failed: ${err.message}${stderr ? ' - ' + stderr : ''}` });
       finishTurn();
@@ -352,13 +534,16 @@ function askClaude(promptText) {
       finishTurn();
       return;
     }
-    if (result.session_id) sessionId = result.session_id;
+    if (result.session_id) claudeSessionId = result.session_id;
     if (result.is_error) {
       out({ t: 'error', message: `claude reported an error: ${result.result || 'unknown'}` });
       finishTurn();
       return;
     }
-    const replyText = result.result || '';
+    // "mention so" — a fallback reply is never silent about being one (the user's own
+    // explicit requirement). Only the SPOKEN/shown reply gets the note; it doesn't touch
+    // the autoListenAfterReply heuristic below (checked against Claude's own text first).
+    const replyText = (isFallback ? "My usual brain's unreachable, so this is backup Claude. " : '') + (result.result || '');
     // A simple, deterministic heuristic — "does the reply end in a question mark" — not
     // a second model call or structured-output plumbing to have Claude explicitly flag
     // it. Matches this project's existing preference for honest, simple scope over more
@@ -369,6 +554,7 @@ function askClaude(promptText) {
     out({ t: 'reply', text: replyText });
     speak(replyText);
   });
+  activeChild = child;
 }
 
 // The system prompt already asks Claude not to use markdown, but a model can still slip
@@ -402,13 +588,18 @@ function speak(text) {
   const spoken = stripMarkdownForSpeech(clean);
   setStatus('speaking');
   const synth = spawn(PIPER_BIN, ['-m', PIPER_MODEL, '-f', TTS_WAV_FILE]);
+  activeChild = synth;
   let synthErr = '';
   synth.stderr.on('data', chunk => { synthErr += chunk; });
   synth.on('error', err => {
+    if (activeChild === synth) activeChild = null;
+    if (turnWasCancelled) return;
     out({ t: 'error', message: `piper failed to start: ${err.message}` });
     finishTurn();
   });
   synth.on('exit', code => {
+    if (activeChild === synth) activeChild = null;
+    if (turnWasCancelled) return; // cancelTurn() already killed this and called finishTurn()
     if (code !== 0) {
       out({ t: 'error', message: `piper exited with code ${code}${synthErr ? ': ' + synthErr.trim() : ''}` });
       finishTurn();
@@ -426,11 +617,14 @@ function speak(text) {
       // Not fatal to the reply itself — Foxy still speaks, the visualizer just won't
       // react to this particular line.
     }
-    execFile('paplay', ['--device', SPEAKER_SINK, TTS_WAV_FILE], err => {
+    const player = execFile('paplay', ['--device', SPEAKER_SINK, TTS_WAV_FILE], err => {
+      if (activeChild === player) activeChild = null;
       stopAudioLevelPlayback();
+      if (turnWasCancelled) return; // cancelTurn() already stopped playback and called finishTurn()
       if (err) out({ t: 'error', message: `paplay failed: ${err.message}` });
       finishTurn();
     });
+    activeChild = player;
     startAudioLevelPlayback(envelope);
   });
   synth.stdin.write(spoken);
@@ -513,7 +707,7 @@ function stopAudioLevelPlayback() {
   out({ t: 'audioLevel', value: 0 }); // settle the visualizer back to idle immediately, not on whatever the last frame happened to be
 }
 
-function resetSession() { sessionId = null; }
+function resetSession() { claudeSessionId = null; hermesSessionId = null; }
 
 const COMMANDS = { startTurn, endTurn, cancelTurn, resetSession, startContinuous, stopContinuous };
 

@@ -56,6 +56,31 @@ const CONFIG_FILE = path.join(os.homedir(), '.config', 'omarchy-quake-panel', 'c
 const PENDING_ACTION_FILE = path.join(os.tmpdir(), 'omarchy-quake-panel-pa-pending-ha-action.json');
 const PENDING_ACTION_TTL_MS = 2 * 60 * 1000; // a stale "yes" from an unrelated later turn should never fire an old action
 
+// ---- persistent memory -----------------------------------------------------------
+
+// Same persisted-state directory Service.qml/PersonalCareState.qml/KnobLighting.qml
+// already use for their own state files — plain JSON, no shared library between QML
+// and these Node-side tools, just an agreed-upon path/shape (this project's existing
+// style; paBridge.js reads this exact same file to inject memories into every turn's
+// system prompt, see its own comment there for why that's passive/automatic rather
+// than requiring a tool call to recall anything already known).
+const MEMORY_FILE = path.join(os.homedir(), '.local', 'state', 'omarchy-quake-panel', 'foxy-memory.json');
+const MEMORY_MAX_ENTRIES = 40; // oldest dropped silently past this — a small, bounded prompt addition, not an ever-growing one
+
+function loadMemory() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveMemory(entries) {
+  fs.mkdirSync(path.dirname(MEMORY_FILE), { recursive: true });
+  fs.writeFileSync(MEMORY_FILE, JSON.stringify(entries, null, 2));
+}
+
 // Every domain/service pair the agent may even PROPOSE — anything else is rejected
 // before a pending action is ever written, regardless of what the model asks for.
 // Deliberately not a generic "call any Home Assistant service" tool: this is a voice
@@ -123,6 +148,60 @@ server.registerTool(
     return result.ok
       ? toolResult('Pomodoro started.')
       : toolResult(`Failed to start the pomodoro: ${result.message}`, true);
+  }
+);
+
+server.registerTool(
+  'remember_fact',
+  {
+    title: 'Remember a fact',
+    description: 'Saves a short fact about the user for future conversations — a preference, a routine, ' +
+      'something worth knowing later. Not shown to the user; it just becomes part of what you already know ' +
+      'in later conversations. Use your own judgment about what is worth saving; no need to ask permission ' +
+      'first for ordinary personal facts.',
+    inputSchema: {
+      fact: z.string().describe('A short, self-contained fact, e.g. "Prefers the office at 21 degrees."'),
+    },
+  },
+  async ({ fact }) => {
+    const entries = loadMemory();
+    entries.push({ text: fact, savedAt: Date.now() });
+    while (entries.length > MEMORY_MAX_ENTRIES) entries.shift();
+    saveMemory(entries);
+    return toolResult('Remembered.');
+  }
+);
+
+server.registerTool(
+  'forget_fact',
+  {
+    title: 'Forget a remembered fact',
+    description: 'Removes a previously remembered fact — use when the user asks you to forget something or ' +
+      'corrects a fact you got wrong. Matches by substring against what was saved, not by exact wording.',
+    inputSchema: {
+      query: z.string().describe('Text to match against remembered facts, e.g. "office temperature".'),
+    },
+  },
+  async ({ query }) => {
+    const entries = loadMemory();
+    const q = query.toLowerCase();
+    const removed = entries.filter(e => e.text.toLowerCase().includes(q));
+    if (removed.length === 0) return toolResult('Nothing matched that.');
+    saveMemory(entries.filter(e => !e.text.toLowerCase().includes(q)));
+    return toolResult(`Forgot: ${removed.map(e => e.text).join('; ')}`);
+  }
+);
+
+server.registerTool(
+  'list_remembered_facts',
+  {
+    title: 'List remembered facts',
+    description: 'Returns everything currently remembered about the user — use when they ask what you remember or know about them.',
+  },
+  async () => {
+    const entries = loadMemory();
+    if (entries.length === 0) return toolResult('Nothing remembered yet.');
+    return toolResult(JSON.stringify(entries.map(e => e.text)));
   }
 );
 

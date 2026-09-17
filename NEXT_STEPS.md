@@ -3,6 +3,41 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## Foxy's brain moves to Hermes over Tailscale, Claude fallback — done, two real gaps remain
+
+See `HISTORY.md` §38. `askHermes()` (SSH + the `hermes` CLI against a dedicated `foxy`
+profile on the user's self-hosted Pi) is now Foxy's primary brain; `askClaude()` — kept
+completely unmodified — is the fallback whenever Hermes is unreachable, with its reply
+audibly prefixed so a fallback is never silent. Verified live end-to-end: real replies
+from the real Hermes instance, session continuity across turns via `--resume`, a clean
+knob-press cancel (including a real gotcha found and fixed — killing the local `ssh`
+client does NOT kill the remote `hermes` process, needed a second targeted `pkill` over
+SSH), and the fallback itself forced with a genuinely unreachable host.
+
+- **No tools wired into Hermes yet, by explicit choice this pass** — pomodoro-by-voice,
+  `remember_fact`/`forget_fact`/`list_remembered_facts`, and Home Assistant control only
+  work while Foxy is in the Claude-fallback state; the Hermes primary path is
+  conversation-only. Hermes' own CLI mentions `hermes mcp serve` (exposing Hermes' own
+  conversations as an MCP tool to something else — the reverse direction from what would
+  be needed here), so this isn't a ready-made answer. Revisit once there's a known way to
+  register outside tools with Hermes — worth checking `website/docs/user-guide/features/
+  api-server.md` in the `NousResearch/hermes-agent` repo first (an "API Server" feature
+  surfaced while researching this, not investigated in depth since the SSH+CLI path was
+  already working well by the time it came up).
+- **Not yet tried with a real human voice** — everything above was verified through a
+  temporary debug IPC hook bypassing `startTurn()`/Voxtype (removed before finishing, same
+  pattern §37 used), not a real "Hey Foxy" + spoken follow-up. The turn-loop plumbing
+  itself (`startTurn`/`endTurn`/`finishTurn`) is completely unchanged by this work, so no
+  new risk is expected, but it's worth a real end-to-end pass.
+- `HERMES_SSH_HOST`/`HERMES_SSH_USER`/`HERMES_BIN`/`HERMES_PROFILE` are all
+  env-overridable (`OQP_PA_HERMES_*`) but currently default to this specific Pi/user/path
+  — a different machine (or the Pi's own `hermes` install location changing) needs its own
+  values.
+- The `foxy` Hermes profile's `SOUL.md` (on the Pi, not in this repo) was hand-written
+  once this session by porting this file's `SYSTEM_PROMPT` wording — if that system prompt
+  is ever tuned again for the Claude-fallback path, remember the Hermes-side `SOUL.md`
+  won't pick up the change automatically; it would need the same edit made twice.
+
 ## Six fixes from real use — done
 
 See `HISTORY.md` §34: bar-widget connection status (mode options hidden when the panel
@@ -24,6 +59,37 @@ unplugging the panel and dragging kiosk content onto the main screen — also fi
 the knob's chosen color not actually surviving a real power-off at the firmware level
 (worked around with a local preference file the app reconciles against the device on
 every reconnect). All confirmed working by the user on the real hardware.
+
+## Foxy: persistent memory, knob-press cancel, session reset — done
+
+See `HISTORY.md` §37. `remember_fact`/`forget_fact`/`list_remembered_facts` (backed by
+`~/.local/state/omarchy-quake-panel/foxy-memory.json`, passively injected into every
+turn's system prompt) verified live end-to-end via real `claude` CLI calls against the
+actual installed MCP server — remember, a completely separate fresh-session recall with
+no `--resume`, and forget all confirmed working. The knob press now cancels an in-flight
+turn instead of always fully toggling Foxy off (`PaState.busy`/`cancelTurn()`,
+`daemon/src/paBridge.js`'s new `activeChild`/`turnWasCancelled`) — verified live against
+the real daemon that a cancel during "thinking" and during "speaking" both drop to idle
+almost instantly with no lingering `paplay`/`piper-tts` process and no spurious error.
+Foxy's own conversation session now resets on toggle-off and after a 30-minute idle
+timer (`OQP_PA_SESSION_IDLE_RESET_MS`) — both verified live (a debug hook read the
+daemon's real in-memory session ID; a temporary second standalone instance with a
+4-second override confirmed the idle timer itself actually fires).
+
+- **Everything above was verified through temporary debug IPC hooks and direct `claude`
+  CLI calls, not a real human voice** — no live test yet of saying "Hey Foxy, remember
+  that I like my coffee black" out loud, letting a later real conversation recall it
+  unprompted, or physically pressing the knob mid-reply to interrupt real Foxy-spoken
+  audio triggered by an actual wake word. The underlying mechanisms are the same ones
+  every other real-voice-verified Foxy feature already relies on (the wake-word
+  listener, `speak()`, `KnobRouter`'s existing dispatch), so no new risk is expected, but
+  this hasn't been done with a human voice/hand yet the way §33's wake-word work was.
+- **No Settings-page UI to browse/edit remembered facts** — deliberately not built this
+  pass; `list_remembered_facts`/`forget_fact` already make this manageable by voice, and
+  a touch UI can follow later if it turns out to be needed.
+- **`SESSION_IDLE_RESET_MS`'s 30-minute default is a guess**, not tuned against real
+  usage patterns — worth revisiting once there's a sense of how long a real idle Foxy
+  conversation tends to sit before someone comes back to it.
 
 ## FOXY's 3D particle visualizer — done
 

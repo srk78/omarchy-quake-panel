@@ -1700,6 +1700,8 @@ confirmed by the user on the real hardware.
 | PA spoken replies (§24) | `daemon/src/paBridge.js`'s `speak()`; voice model at `~/.local/share/piper/voices/` (not in the repo) |
 | PA "Hey Foxy" wake-word mode (§26, §31, §33) | `daemon/src/paTools/wakeword.py` (`nanowakeword.NanoInterpreter`, model at `daemon/src/paTools/models/hey_foxy.onnx`, overridable via `OQP_PA_WAKEWORD_MODEL`/`_THRESHOLD`), `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | PA Home Assistant control (§29) | `daemon/src/paTools/server.js`'s HA tools, `daemon/src/paBridge.js`'s `OQP_PA_TURN_ID`; credentials at `~/.config/omarchy-quake-panel/config.json` (not in the repo) |
+| PA persistent memory, knob-press cancel, session reset (§37) | `daemon/src/paTools/server.js`'s `remember_fact`/`forget_fact`/`list_remembered_facts`; `daemon/src/paBridge.js`'s `loadMemoryForPrompt`/`activeChild`/`turnWasCancelled`/`_armSessionIdleReset`; `shell/Services/KnobRouter.qml`'s FOXY press; memory file at `~/.local/state/omarchy-quake-panel/foxy-memory.json` |
+| Foxy's primary brain: self-hosted Hermes over Tailscale/SSH, Claude fallback (§38) | `daemon/src/paBridge.js`'s `askHermes`/`killRemoteHermesTurn`/`hermesSessionId`; fallback path is the original `askClaude`/`claudeSessionId`, untouched; Hermes-side persona at `~/.hermes/profiles/foxy/SOUL.md` on the Pi (not in this repo) |
 | FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
 | FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |
 | Standalone dev entry point | `shell/shell.qml` |
@@ -1731,3 +1733,166 @@ machine's assistant memory at
 project-local, portable equivalent (readable from *any* session rooted in this repo,
 where the memory file above is only loaded automatically in sessions rooted in
 `bedrock-panel`).
+
+## 37. Foxy: persistent memory, knob-press cancel, session reset policy (2026-09-14)
+
+Three improvements picked out of a broader "how do we improve Foxy" brainstorm as the
+highest-value next steps, chosen because they reinforce each other: once anything
+genuinely worth keeping is captured by real persistent memory, resetting the raw
+conversation session on a regular basis stops being a risk and becomes obviously the
+right default.
+
+**Persistent memory.** `daemon/src/paTools/server.js` gains three new tools —
+`remember_fact`, `forget_fact`, `list_remembered_facts` — backed by a plain JSON file
+(`~/.local/state/omarchy-quake-panel/foxy-memory.json`, an array of `{text, savedAt}`
+capped at 40 entries, oldest dropped silently past that), following `start_pomodoro`'s
+simpler direct-call precedent rather than Phase D's confirm-gated one: remembering a
+fact is low-consequence compared to flipping a real switch. Recall is passive, not
+tool-based — `daemon/src/paBridge.js`'s `askClaude()` reads the same file directly
+(plain `fs`, no shared module between the two processes, matching this project's
+existing no-shared-lib style between QML and Node) and appends a "known facts about the
+user" block to the system prompt on every single call, so Foxy always has this context
+without spending a tool round-trip fetching it first. `SYSTEM_PROMPT` tells the model to
+save ordinary personal facts/preferences without asking permission first, and to call
+`forget_fact` on a correction. Verified live end-to-end with real `claude` CLI calls
+against the actual installed MCP server: a "remember my favorite tea" turn wrote the
+file correctly; a completely separate, freshly-started conversation (no `--resume`, no
+mention of tea) answered "what's my favorite tea" correctly from the injected system
+prompt alone, proving the passive-recall path actually works and isn't just trusting the
+model's own context; a "forget the tea thing" turn correctly emptied the file back out.
+
+**Knob press to cancel mid-turn.** `shell/Services/KnobRouter.qml`'s FOXY press action
+is now context-sensitive, using state that already existed (`PaState.busy`,
+`PaState.cancelTurn()`): busy cancels the in-flight turn, idle toggles Foxy on/off as
+before — deliberately knob-only, the on-screen power button keeps its simpler always-off
+behavior. The real work was making `daemon/src/paBridge.js`'s `cancelTurn()` actually
+*do* something for every phase, not just "listening" (its only previously-real
+behavior). A new module-level `activeChild` holds whatever long-running child process
+represents the current turn — the `claude` CLI during "thinking", Piper synthesis or
+`paplay` during "speaking", the `voxtype record stop --wait` call during "transcribing"
+— set right before each spawn/`execFile` and cleared (only if it still points at that
+same child, so a fast-following turn's own process can never be clobbered) the moment
+that call's own completion callback runs. A `turnWasCancelled` flag, set by
+`cancelTurn()` right before it SIGKILLs `activeChild`, lets that killed process's own
+completion callback (which still fires, just as an error or non-zero exit) recognize the
+turn already ended deliberately and skip re-processing — no double `finishTurn()`, no
+spurious "claude CLI failed"/"piper exited with code null" error for an intentional
+cancel. "Listening" keeps its pre-existing, different mechanism (an explicit `voxtype
+record cancel` command, not a process kill) since Voxtype's own recording is a
+background service, not tied to any child-process handle on this side. Verified live
+against the real, installed daemon: temporary debug IPC hooks (`debugPaAsk`, bypassing
+`startTurn()`/Voxtype to reach "thinking" without needing real mic input, plus
+`debugPaCancel`/`debugPaStatus`) confirmed a cancel during "thinking" drops the status to
+"idle" within a fraction of a second with no error logged, and a cancel during
+"speaking" does the same *and* leaves no lingering `paplay`/`piper-tts` process behind
+(checked via `ps aux` immediately after) — the reply audio genuinely stops rather than
+finishing in the background. Continuous mode and the wake-word listener were confirmed
+unaffected by a cancel either way. All debug hooks were removed before finishing.
+
+**Session reset policy.** A long-lived `--resume` session only ever grows — every turn
+resends its whole history, an untuned cost/latency concern already flagged in
+`NEXT_STEPS.md`. `stopContinuous()` now also calls the existing `resetSession()`,
+matching the transcript-clearing visual reset `PaState.qml`'s `setContinuousMode(false)`
+already did — turning Foxy off now actually means a fresh conversation next time, not
+just a fresh-looking one. A new idle timer (`SESSION_IDLE_RESET_MS`, default 30 minutes,
+`OQP_PA_SESSION_IDLE_RESET_MS`-overridable like every other `OQP_PA_*` tunable in this
+file) is armed at the end of every turn while continuous mode stays on, and silently
+resets the session if Foxy goes untouched for that whole window — logged to stderr for
+diagnosability, not surfaced as a chat-visible event (same "quiet unless it's actually
+interesting" precedent as the silence-after-wake-word fix in §34). Verified live: a
+debug hook (`debugPaSessionId`, printing the daemon's real in-memory `sessionId` to
+stderr) confirmed a real session ID was established after a turn, confirmed it was reset
+to `null` immediately after toggling Foxy off and back on, and — using a temporary
+second, standalone instance of the daemon (mic free at the time; no conflict with the
+live one) with `OQP_PA_SESSION_IDLE_RESET_MS=4000` — confirmed the idle timer itself
+actually fires and calls `resetSession()` on its own after a real turn, without needing
+to wait out the real 30-minute default. Debug hook removed before finishing.
+
+## 38. Foxy's brain moves to Hermes, self-hosted over Tailscale, with a Claude fallback (2026-09-17)
+
+Foxy's primary brain is no longer the wrapped `claude` CLI running locally — it's now
+**Hermes**, the user's own self-hosted agent harness, running on a Raspberry Pi
+(Tailscale hostname `hermes`) with inference from a Qwen model served by Ollama on a
+separate Mac Studio, also on the tailnet ("I will continue to make Hermes smarter and
+better, so Foxy will get smarter and better").
+
+**Why SSH + the `hermes` CLI, not a native network protocol.** Hermes documents a
+WebSocket "connector" contract for building platform integrations (Discord/Telegram-
+style), complete with HMAC-signed auth, capability descriptors, and scale-to-zero wake
+primitives. Investigated it in real detail (fetched the actual contract markdown from
+the `NousResearch/hermes-agent` repo, not just the rendered docs) before deciding
+against it: the doc itself says **"EXPERIMENTAL... MAY CHANGE without a deprecation
+cycle,"** and its only reference implementation lives in a separate repo,
+`NousResearch/gateway-gateway` — confirmed **404, not public**. Building a WebSocket
+server + token-issuance + enrollment flow from a doc description alone, against a
+contract that could shift under us, was judged too much risk for "send an utterance, get
+a reply." Instead: Hermes' own CLI turns out to be structurally very close to `claude`
+itself (profiles, sessions, one-shot invocation, `--continue`/`--resume`), discovered via
+its CLI reference docs — so the integration is SSH + `hermes chat`, mirroring this file's
+own pre-existing `askClaude()` shape almost exactly, no new protocol at all.
+
+**Setup done on the Pi (outside this repo).** Passwordless SSH key auth from this laptop
+to `stefan@hermes`. A dedicated `foxy` Hermes profile (`hermes profile create foxy
+--clone`, cloning `default`'s model config but leaving its messaging-platform bot tokens
+behind), with its `SOUL.md` — Hermes' own "slot #1 identity, completely replacing the
+built-in default" — rewritten with Foxy's voice-friendly persona (short replies, no
+markdown/asterisks, ask when missing info), ported from this file's own `SYSTEM_PROMPT`.
+
+**Real gotchas found only by testing against the actual box**, none of which the docs
+mentioned:
+- `hermes` isn't on a non-interactive SSH session's `PATH` (only added by `.bashrc`,
+  which non-interactive SSH skips) — invoked via its full path,
+  `/home/stefan/.local/bin/hermes`, instead.
+- `-z` (the CLI's own "purest one-shot" flag) doesn't actually accept `--query-file` —
+  that flag only exists on `hermes chat`. Landed on `hermes chat --query-file <path>
+  --oneshot -Q -p foxy --source tool` instead, confirmed live to print **exactly** the
+  reply text on stdout and nothing else — the `session_id: <id>` line, warnings, and
+  "session found but has no messages" notices all ride stderr, which made parsing
+  trivial (no JSON, no banner-stripping needed).
+- `--query-file`'s own docs promise "nothing is shell-interpreted, so quotes, $(...), and
+  backticks are preserved verbatim" — confirmed by design choice, not just trusted: the
+  prompt text is piped over the SAME ssh connection's stdin to `cat > <remote temp
+  path>`, so real speech-to-text output (which can contain apostrophes, quotes, anything)
+  never appears on any command line, local or remote, sidestepping a genuine remote-shell
+  injection surface entirely.
+- **Killing the local `ssh` client does NOT kill the remote `hermes` process** — SSH
+  without a pseudo-tty doesn't propagate the hangup. Confirmed live: SIGKILL-ing the
+  local `ssh` child left the actual `hermes chat` Python process running on the Pi,
+  orphaned. Fixed with a second, best-effort, fire-and-forget `ssh ... pkill -9 -f
+  <this-turn's-own-unique-remote-temp-path>` fired by `cancelTurn()` whenever
+  `turnWasCancelled` is set on the Hermes path — verified live that a knob-press
+  cancel during "thinking" now leaves nothing running on the Pi at all.
+- Session continuity verified for real, not assumed from the docs: one call establishes
+  a session (`hermes`'s own `session_id: ...` on stderr, captured into `hermesSessionId`),
+  a second call passing `--resume <that id>` correctly recalled a fact from the first
+  ("remember pineapple" → "what word did I just ask you to remember?" → correctly
+  answered "pineapple"), and a plain call with neither `--resume` nor `--continue` starts
+  genuinely fresh with no memory of anything — confirming `resetSession()`'s existing
+  "just don't pass a resume flag" approach (already built for the Claude path, §37) needed
+  no new mechanism at all, just a second variable (`hermesSessionId` alongside the renamed
+  `claudeSessionId`) cleared by the same function.
+
+**Fallback, verified live with a genuinely unreachable host** (`OQP_PA_HERMES_HOST`
+pointed at a nonexistent hostname): `askHermes()`'s failure branch — anything from a
+down Pi to a dead tailnet link to `ssh`'s own `ConnectTimeout` firing all look identical
+from this side — calls the **original, unmodified** `askClaude()` as a fallback, with
+its reply prefixed: *"My usual brain's unreachable, so this is backup Claude. ..."* —
+never a silent fallback, per the user's own explicit requirement. Since `askClaude()`
+and its full MCP tool wiring (`ALLOWED_TOOLS`, `SYSTEM_PROMPT`, `paTools/server.js`) are
+untouched, pomodoro/remembered-facts/Home-Assistant-control all keep working during a
+fallback — a nice side effect of not deleting any of last session's work.
+
+**Explicitly out of scope this pass, per the user's own choice**: no tools are wired
+into Hermes itself — pomodoro-by-voice, `remember_fact`/`forget_fact`, and Home
+Assistant control only work while Foxy is in the Claude-fallback state, not on the
+Hermes primary path. Hermes' own CLI mentions `hermes mcp serve` (exposing Hermes'
+*own* conversations as an MCP tool to something else — the reverse direction from what
+Foxy would need), so this isn't a ready-made answer; revisit once there's a known way to
+register outside tools with Hermes. See `NEXT_STEPS.md`.
+
+Not yet tried: a real wake-word-triggered, real-microphone round trip through the Hermes
+path (everything above was verified via a temporary debug IPC hook bypassing
+`startTurn()`/Voxtype, the same pattern §37 used, removed before finishing) — the
+underlying turn-loop plumbing (`startTurn`/`endTurn`/`finishTurn`) is completely
+unchanged by this work, so no new risk is expected, but it hasn't been exercised by an
+actual human voice yet.
