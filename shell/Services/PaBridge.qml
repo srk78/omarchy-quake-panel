@@ -13,12 +13,17 @@ QtObject {
 
     signal stateEvent(var state)
     signal transcript(string text)
-    signal reply(string text)
+    signal reply(string text, real durationMs)
     signal daemonError(string message)
     // Fired ~30x/sec while Foxy's own reply is playing (paBridge.js's speak() streams
     // this from the reply audio's own precomputed volume envelope, not a live mic tap —
     // see Ui/FoxyVisualizer.qml and HISTORY.md). 0..1, normalized.
     signal audioLevel(real value)
+    // Fired once, right as real playback begins — durationMs is the reply audio's own
+    // already-known length (paBridge.js's speak() computes it before playback starts).
+    // Pages/PaPage.qml paces the transcript's auto-scroll to it instead of jumping to
+    // the reply's end the instant the text is appended.
+    signal speakingStarted(real durationMs)
 
     function sendCommand(cmdObj) {
         proc.write(JSON.stringify(cmdObj) + "\n")
@@ -34,9 +39,10 @@ QtObject {
                 try { msg = JSON.parse(line) } catch (e) { console.log("PaBridge: bad JSON from daemon: " + line); return }
                 if (msg.t === "state") root.stateEvent(msg.state)
                 else if (msg.t === "transcript") root.transcript(msg.text)
-                else if (msg.t === "reply") root.reply(msg.text)
+                else if (msg.t === "reply") root.reply(msg.text, msg.durationMs || 0)
                 else if (msg.t === "error") root.daemonError(msg.message)
                 else if (msg.t === "audioLevel") root.audioLevel(msg.value)
+                else if (msg.t === "speakingStarted") root.speakingStarted(msg.durationMs || 0)
             }
         }
         stderr: SplitParser {

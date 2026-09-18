@@ -453,8 +453,16 @@ function killRemoteHermesTurn(remoteTmpPath) {
 // written by piping promptText over this SAME ssh connection's stdin to `cat >
 // <remoteTmpPath>` — one round trip, and the prompt's bytes never appear on any command
 // line, local or remote.
+// Set once per turn, here — the sole entry point into "thinking" — and read by whichever
+// success branch eventually emits a reply (askHermes()'s own, or askClaude()'s when
+// called as Hermes' fallback below). Deliberately NOT reset on a fallback: the reported
+// duration should honestly include a failed Hermes attempt's own wait, since that's real
+// time the user was kept waiting, not just the fallback's own faster half.
+let thinkingStartedAt = 0;
+
 function askHermes(promptText) {
   setStatus('thinking');
+  thinkingStartedAt = Date.now();
   const remoteTmpPath = `/tmp/oqp-hermes-turn-${Date.now()}.txt`;
   // hermesSessionId only ever comes from Hermes' own stderr (see below), never from user
   // input — but it still gets validated before being concatenated into the remote command
@@ -488,7 +496,7 @@ function askHermes(promptText) {
     if (m) hermesSessionId = m[1];
     const replyText = stdout.trim();
     autoListenAfterReply = /\?["')\]]*$/.test(replyText.trim());
-    out({ t: 'reply', text: replyText });
+    out({ t: 'reply', text: replyText, durationMs: Date.now() - thinkingStartedAt });
     speak(replyText);
   });
   child.stdin.write(promptText);
@@ -551,7 +559,7 @@ function askClaude(promptText, isFallback) {
     // §26, is the precedent). Consumed once by finishTurn(), after Foxy's spoken reply
     // actually finishes playing.
     autoListenAfterReply = /\?["')\]]*$/.test(replyText.trim());
-    out({ t: 'reply', text: replyText });
+    out({ t: 'reply', text: replyText, durationMs: Date.now() - thinkingStartedAt });
     speak(replyText);
   });
   activeChild = child;
@@ -625,6 +633,11 @@ function speak(text) {
       finishTurn();
     });
     activeChild = player;
+    // The transcript's own auto-scroll (Pages/PaPage.qml) paces itself to real speaking
+    // time rather than jumping to the reply's end the instant it's appended — this is
+    // the one place that duration is actually known (the envelope's own length, already
+    // computed above), so it's sent once, right as real playback begins.
+    out({ t: 'speakingStarted', durationMs: Math.round(envelope.length * (1000 / AUDIO_LEVEL_FPS)) });
     startAudioLevelPlayback(envelope);
   });
   synth.stdin.write(spoken);

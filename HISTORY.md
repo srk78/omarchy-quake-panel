@@ -1704,6 +1704,8 @@ confirmed by the user on the real hardware.
 | Foxy's primary brain: self-hosted Hermes over Tailscale/SSH, Claude fallback (§38) | `daemon/src/paBridge.js`'s `askHermes`/`killRemoteHermesTurn`/`hermesSessionId`; fallback path is the original `askClaude`/`claudeSessionId`, untouched; Hermes-side persona at `~/.hermes/profiles/foxy/SOUL.md` on the Pi (not in this repo) |
 | FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
 | FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |
+| FOXY robust auto-scroll, top-right off icon, answer-time caption (§39) | `shell/Pages/PaPage.qml`'s `onContentHeightChanged`/duration delegate; `shell/Ui/Section.qml`'s `headerTrailing`; `shell/Ui/PanelButton.qml`'s icon-only sizing; `daemon/src/paBridge.js`'s `thinkingStartedAt`/`durationMs` |
+| FOXY transcript touch scroll-back, speech-paced reveal (§40) | `shell/Pages/PaPage.qml`'s `transcriptView` (`registerDrag`/`pinnedToBottom`/`pacedScroll`); `daemon/src/paBridge.js`'s `speakingStarted` message; `shell/Services/PaBridge.qml`/`PaState.qml`'s `speakingStarted` signal |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
@@ -1896,3 +1898,119 @@ path (everything above was verified via a temporary debug IPC hook bypassing
 underlying turn-loop plumbing (`startTurn`/`endTurn`/`finishTurn`) is completely
 unchanged by this work, so no new risk is expected, but it hasn't been exercised by an
 actual human voice yet.
+
+## 39. FOXY page: robust auto-scroll, a relocated off-icon, and an answer-time caption (2026-09-18)
+
+Three small UX refinements to the FOXY page, all verified live against the real panel
+(a temporary debug hook triggering real Hermes turns without needing mic input, plus a
+temporary `debugSetPage` hook to jump pages for screenshots — both removed before
+finishing).
+
+**Auto-scroll made robust against long, wrapping replies.** The transcript `ListView`
+already had `onCountChanged: Qt.callLater(positionViewAtEnd)`, which fires the moment a
+line is appended — but a wrapped multi-line `Text`'s own implicit height resolves in a
+later pass, so a long reply could settle the scroll position a beat before that height
+was final. Added a second trigger, `onContentHeightChanged`, which reacts to the ListView's
+actual rendered content height (including a late-resolving wrap) rather than just the
+item count. Both call the same idempotent `positionViewAtEnd`. Verified live with a
+deliberately long (8+ sentence) reply that wraps across many lines — the transcript
+settles genuinely at the true bottom.
+
+**"Turn Foxy off" relocated from a bottom-of-card labeled button to a top-right icon.**
+This surfaced a real layout lesson, caught only by looking at an actual screenshot (per
+this project's own standing rule that visual work isn't done until captured and looked
+at): the first attempt anchored a full touch-target-sized (60px) icon-only button against
+the section's own top edge, or against its label row's vertical center — but a
+`Section`'s label row is only ~28px tall, so a 60px button centered on it *always*
+overhangs into the content area below by construction, no matter how the anchor is
+tuned. The real fix was architectural, not a margin tweak: `Ui/Section.qml` gained an
+optional `headerTrailing` slot (a `Loader`, vertically centered against the label inside
+a wrapper `Item` whose own `height` is `Math.max(label, trailing)`), so the header row's
+height genuinely grows to fit whatever's placed there — content below it
+(`anchors.top: header.bottom`) is then guaranteed clear, not just visually close. Fully
+backward-compatible: `PersonalCarePage.qml`/`SettingsPage.qml`'s existing `Section` usage
+never sets `headerTrailing`, so the wrapper's height collapses back to just the label's,
+identical to before (confirmed live via screenshot — both pages render unchanged).
+`Ui/PanelButton.qml` also gained icon-only sizing: `implicitWidth` used to have a fixed
+150px floor sized for icon+label pairs; when `text === ""` it's now a plain square
+(`touchControlHeight`), a no-op for every existing text-carrying usage.
+
+**A caption showing how long Foxy took to answer.** Scoped to the "thinking" phase only
+(brain latency — Hermes, or Claude on a fallback — excluding how long the user spoke or
+how long Piper takes to speak the reply), per the user's own choice, shown as a small
+dim caption under each Foxy line once it lands (no live ticking counter while waiting).
+`daemon/src/paBridge.js` records `thinkingStartedAt` once per turn — set at the top of
+`askHermes()`, the sole entry into "thinking" — and NOT reset when falling back to
+Claude, so a fallback's reported duration honestly includes the failed Hermes attempt's
+own wait, matching this project's standing preference for honest numbers over flattering
+ones. Threaded through as `durationMs` on the `reply` IPC message → `PaBridge.qml`'s
+`reply` signal → `PaState.qml`'s `_appendLine`/transcript model → a small
+`theme.secondaryForeground`/`caption`-sized `Text` in the delegate, formatted as
+`"3.2s"`. Verified live: a real Hermes call showed durations from 26s to 56s depending
+on reply length — genuinely useful given Hermes and the Claude fallback can have very
+different latencies.
+
+## 40. FOXY transcript: touch scroll-back, speech-paced reveal, and the off icon's real home (2026-09-18)
+
+Follow-up to §39, from real use: the transcript couldn't be scrolled back by touch at
+all, a long reply snapped straight to the bottom the instant its (un-streamed, all-at-
+once) text was appended — hiding the beginning before there was any chance to read it
+even though Foxy was still only just starting to speak — and the relocated off icon had
+landed top-right of the *conversation* block instead of the *particle-cloud* block.
+
+**Touch scroll-back.** The transcript `ListView` registers itself with `TouchRouter.
+registerDrag` — the exact same pattern `Ui/Slider.qml` already uses for continuous
+dragging, since this app's layer-shell surface never receives real touch/flick gestures
+natively (a confirmed Hyprland bug; `interactive: false` was never the actual blocker).
+`onMove` computes the vertical delta since the last point and moves `contentY` by hand,
+clamped to `[0, contentHeight - height]` — no native Flickable bounds-behavior is
+driving this, so the clamping is this code's own job, same spirit as `Slider.qml`'s own
+manual value math. A drag starting mid-animation (see below) takes over immediately.
+
+**A `pinnedToBottom` flag, so auto-scroll never fights a manual scroll-back.** Every
+auto-scroll — the existing instant jump for user/error lines, and the new paced reveal
+below — now checks this first. Only the user's own drag ending back at the true bottom
+(or the transcript emptying out on Foxy off) re-arms it; new content while scrolled away
+just accumulates, visible once they scroll back down themselves. A real ordering bug
+surfaced building this: recomputing the flag on every `contentHeightChanged` (including
+the deliberately-not-yet-scrolled growth of an arriving Foxy reply) judged the view as
+"not pinned" before the paced scroll ever got a chance to run, since content had grown
+without `contentY` having moved *yet* — silently disabling the entire feature on every
+single reply. Fixed by skipping the pinned recompute entirely for a Foxy reply's own
+content growth; it's the paced-scroll's own settle, not a `contentHeightChanged`
+side-effect, that should ever mark the view "pinned" again.
+
+**Foxy's reply is now revealed at the pace of real speaking time**, not jumped to
+instantly. `daemon/src/paBridge.js`'s `speak()` already computes the reply audio's exact
+envelope/length before playback starts (for the particle visualizer) — a new wire
+message, `{t: 'speakingStarted', durationMs}`, sends that same already-known duration to
+the UI right as real playback begins (`PaBridge.qml` → `PaState.qml`, relayed straight
+through same as `reply`/`transcript`). `PaPage.qml` animates `contentY` from wherever it
+is to the true bottom over exactly that duration (a plain linear `NumberAnimation`,
+started imperatively so a fresh duration applies every time) — landing on the last line
+right around when speech actually finishes. A verification-only debug build's console
+logging caught a second real bug directly: a 5-second "Piper failed, snap to bottom
+anyway" fallback timer — meant only for a genuine synthesis/playback failure — was
+firing during perfectly ordinary synthesis of a long reply (Piper generating over a
+minute of audio does not finish in five seconds) and jumping to the bottom before
+`speakingStarted` ever arrived, defeating the whole feature silently. Bumped to 30
+seconds, comfortably clear of any realistic synthesis time while still catching an
+actual failure reasonably promptly. Verified live end-to-end with a ten-plus-sentence
+reply (114 seconds of real speech): an early screenshot showed only the reply's opening
+lines still on screen; a later one showed real, partial progress; the final settled
+state — captured after the whole reply had finished, by coincidence, when a
+question-ending reply's own `autoListenAfterReply` had already moved on to the next
+turn — landed exactly on the reply's last line, confirming the animation completes
+precisely at the true bottom rather than needing the safety-net snap to paper over it.
+
+**The off icon now lives on the particle-cloud block**, not the conversation block.
+`Ui/Section.qml`'s `headerTrailing` slot (added in §39) is no longer used by the
+conversation `Section` at all — it reverts to exactly the same shape
+`PersonalCarePage.qml`/`SettingsPage.qml` already have. `FoxyVisualizer` itself stays
+untouched; `Pages/PaPage.qml` wraps it and the icon together in a plain `Item` sized to
+the same column slot, with the button anchored to that wrapper's own top-right corner —
+confirmed live via screenshot sitting correctly over the particle cloud.
+
+Touch-drag scrolling itself was verified by code review and by matching `Slider.qml`'s
+already-hardware-proven `registerDrag` pattern exactly, not by an actual finger on the
+panel this session — see `NEXT_STEPS.md`.

@@ -89,28 +89,88 @@ Item {
             // page header (Ui/PageHeader.qml) — showing them a second time here was
             // redundant.
             Section {
+                id: conversationSection
                 theme: root.theme
                 icon: "󰍩"; label: "CONVERSATION"
                 width: pageRow.conversationWidth
 
                 ListView {
+                    id: transcriptView
                     width: parent.width
                     height: parent.height
                     clip: true
-                    // Real touch never reaches native flick gestures on this
-                    // layer-shell surface anyway (Services/TouchRouter.qml's own
-                    // header comment on Hyprland's touch-delivery bug) — scrolling
-                    // here is automatic-only (onCountChanged below), never a manual
-                    // drag, so disabling interactive flicking isn't a lost feature.
+                    // Real touch never reaches native flick gestures on this layer-shell
+                    // surface anyway (Services/TouchRouter.qml's own header comment on
+                    // Hyprland's touch-delivery bug), so native Flickable dragging was
+                    // never going to work regardless of this flag — scrolling is driven
+                    // by hand below, the same way Ui/Slider.qml drives its own value by
+                    // hand rather than through a native drag handle.
                     interactive: false
                     model: root.paState.transcript
-                    delegate: Line {
+
+                    // Whether the view is currently at (or very near) its true bottom —
+                    // everything that auto-scrolls below checks this first, so a manual
+                    // scroll-back to reread something is never fought. Only the user's
+                    // own drag (or the transcript emptying out on Foxy off) changes it
+                    // back; new content while scrolled away just accumulates, visible
+                    // once they scroll back down themselves.
+                    property bool pinnedToBottom: true
+                    readonly property real _maxContentY: Math.max(0, contentHeight - height)
+                    function _updatePinned() {
+                        pinnedToBottom = contentY >= _maxContentY - root.theme.space(4)
+                    }
+                    function _scrollToBottomInstant() {
+                        if (!pinnedToBottom) return
+                        Qt.callLater(positionViewAtEnd)
+                    }
+                    function _lastRole() {
+                        var c = root.paState.transcript.count
+                        return c === 0 ? "" : root.paState.transcript.get(c - 1).role
+                    }
+
+                    // Touch-drag scroll-back — the same TouchRouter.registerDrag(item,
+                    // onStart, onMove) pattern Ui/Slider.qml already uses for continuous
+                    // dragging (see its own header comment for why this exists at all:
+                    // a confirmed Hyprland bug means real touch never reaches a native
+                    // gesture recognizer on this window). Global (x, y) in; only the
+                    // vertical delta since the last point matters here. A drag starting
+                    // mid-animation takes over immediately rather than fighting it.
+                    property real _dragLastY: 0
+                    Component.onCompleted: root.touchRouter.registerDrag(transcriptView,
+                        function (x, y) {
+                            pacedScroll.stop()
+                            transcriptView._dragLastY = y
+                        },
+                        function (x, y) {
+                            var dy = y - transcriptView._dragLastY
+                            transcriptView._dragLastY = y
+                            transcriptView.contentY = Math.max(0, Math.min(transcriptView._maxContentY, transcriptView.contentY - dy))
+                            transcriptView._updatePinned()
+                        })
+                    Component.onDestruction: root.touchRouter.unregisterDrag(transcriptView)
+
+                    delegate: Column {
                         required property string role
                         required property string body
-                        text: (role === "user" ? "You: " : role === "foxy" ? "Foxy: " : "") + body
-                        font.bold: role === "foxy"
-                        color: role === "user" || role === "error" ? root.theme.secondaryForeground : root.theme.foreground
-                        maximumLineCount: 9999 // no truncation — real scrolling handles overflow now
+                        required property real durationMs
+                        width: ListView.view.width
+                        Line {
+                            text: (role === "user" ? "You: " : role === "foxy" ? "Foxy: " : "") + body
+                            font.bold: role === "foxy"
+                            color: role === "user" || role === "error" ? root.theme.secondaryForeground : root.theme.foreground
+                            maximumLineCount: 9999 // no truncation — real scrolling handles overflow now
+                        }
+                        // How long Foxy's brain took to answer — thinking time only
+                        // (daemon/src/paBridge.js's thinkingStartedAt), not how long the
+                        // user spoke or how long Piper takes to speak the reply.
+                        Text {
+                            visible: role === "foxy" && durationMs > 0
+                            textFormat: Text.PlainText
+                            text: (durationMs / 1000).toFixed(1) + "s"
+                            color: root.theme.secondaryForeground
+                            font.family: root.theme.font.family
+                            font.pixelSize: root.theme.font.caption
+                        }
                     }
                     Line {
                         // Not anchors.fill — Line already binds width: parent.width
@@ -124,24 +184,97 @@ Item {
                         text: "Say “Hey Foxy” and ask for something — try “start the pomodoro”."
                         color: root.theme.secondaryForeground
                     }
-                    onCountChanged: Qt.callLater(positionViewAtEnd)
-                }
 
-                button: PanelButton {
-                    theme: root.theme
-                    touchRouter: root.touchRouter
-                    icon: "󰍭"
-                    text: "Turn Foxy off"
-                    onActivated: root.paState.toggleContinuousMode()
+                    // A Foxy reply no longer jumps to the bottom the instant its (whole,
+                    // un-streamed) text is appended — see speakingStartedConn below,
+                    // which paces the reveal to actual speaking time instead. Every
+                    // other line (the user's own, an error) keeps the plain instant
+                    // scroll, still gated on pinnedToBottom via _scrollToBottomInstant.
+                    // Two triggers on the plain path, not one: onCountChanged fires the
+                    // moment a line is appended, but a wrapped multi-line reply's own
+                    // height resolves asynchronously (Text.wrapMode's implicit-height
+                    // pass) — contentHeightChanged catches that settling a frame later.
+                    onCountChanged: {
+                        if (root.paState.transcript.count === 0) { pinnedToBottom = true; return }
+                        if (_lastRole() === "foxy") { foxyScrollFallback.restart(); return }
+                        _scrollToBottomInstant()
+                    }
+                    onContentHeightChanged: {
+                        // A foxy reply's growing height deliberately does NOT recompute
+                        // pinnedToBottom here — it's still waiting on speakingStartedConn
+                        // to run the paced scroll below, and content having grown ahead
+                        // of that (contentY hasn't moved yet, on purpose) would otherwise
+                        // look exactly like "the user scrolled away," incorrectly
+                        // cancelling the very animation this height change is set up for.
+                        if (_lastRole() === "foxy") return
+                        _scrollToBottomInstant()
+                        // Deferred so it judges the position AFTER the scroll just
+                        // triggered above has actually run (Qt.callLater callbacks run
+                        // in the order queued), not a stale pre-scroll snapshot.
+                        Qt.callLater(_updatePinned)
+                    }
+
+                    // Safety net: if Foxy's own reply text was appended but real
+                    // playback never actually starts (a Piper/paplay failure), the
+                    // reply would otherwise stay stuck out of view forever with nothing
+                    // left to trigger a scroll. Armed above the moment a foxy line
+                    // lands; disarmed by speakingStartedConn the moment real playback
+                    // (and the paced scroll) actually begins. 30s, not a few — confirmed
+                    // live that Piper synthesizing a long reply (a minute-plus of actual
+                    // speech) can itself take longer than a short timeout here, which
+                    // fired this "failure" fallback during perfectly normal synthesis
+                    // and jumped to the bottom before speakingStartedConn ever got a
+                    // chance to pace anything.
+                    Timer { id: foxyScrollFallback; interval: 30000; onTriggered: transcriptView._scrollToBottomInstant() }
+
+                    NumberAnimation {
+                        id: pacedScroll
+                        target: transcriptView
+                        property: "contentY"
+                        easing.type: Easing.Linear
+                        // Final safety snap once paced playback ends — cheap and
+                        // idempotent, guards against contentHeight drifting a little
+                        // after the animation's target was first computed.
+                        onStopped: transcriptView._scrollToBottomInstant()
+                    }
+                    Connections {
+                        id: speakingStartedConn
+                        target: root.paState
+                        function onSpeakingStarted(durationMs) {
+                            foxyScrollFallback.stop()
+                            if (!transcriptView.pinnedToBottom) return
+                            pacedScroll.stop()
+                            pacedScroll.to = transcriptView._maxContentY
+                            pacedScroll.duration = Math.max(1, durationMs)
+                            pacedScroll.start()
+                        }
+                    }
                 }
             }
 
-            FoxyVisualizer {
-                theme: root.theme
+            // Wrapped together (rather than anchored as a loose sibling in pageRow) so
+            // the off icon can sit at THIS block's own top-right corner, not the
+            // conversation block's — FoxyVisualizer itself stays untouched, a focused
+            // rendering component with no chrome of its own.
+            Item {
                 width: pageRow.visualizerWidth
                 height: pageRow.height
-                audioLevel: root.paState.audioLevel
-                status: root.paState.status
+
+                FoxyVisualizer {
+                    anchors.fill: parent
+                    theme: root.theme
+                    audioLevel: root.paState.audioLevel
+                    status: root.paState.status
+                }
+
+                PanelButton {
+                    theme: root.theme
+                    touchRouter: root.touchRouter
+                    icon: "󰍭"
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    onActivated: root.paState.toggleContinuousMode()
+                }
             }
         }
     }

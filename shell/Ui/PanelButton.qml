@@ -15,7 +15,11 @@ Rectangle {
     property string icon: ""
     signal activated()
 
-    implicitWidth: Math.max(theme.space(150), row.implicitWidth + theme.spacing.controlPaddingX * 4)
+    // Icon-only (no text) gets a compact square touch target instead of the wide pill
+    // labeled buttons need — sized to the same touchControlHeight as the vertical
+    // dimension, not stretched to fit a 150px minimum meant for icon+label pairs.
+    implicitWidth: root.text === "" ? theme.spacing.touchControlHeight
+        : Math.max(theme.space(150), row.implicitWidth + theme.spacing.controlPaddingX * 4)
     implicitHeight: theme.spacing.touchControlHeight
     color: tapHandler.pressed ? theme.pressedFill : "transparent"
     border.color: theme.controlBorderColor

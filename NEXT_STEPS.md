@@ -3,6 +3,44 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## FOXY transcript: touch scroll-back, speech-paced reveal, off icon's real home — done, one gap remains
+
+See `HISTORY.md` §40. The transcript can now be scrolled back by touch (`TouchRouter.
+registerDrag`, the same pattern `Ui/Slider.qml` already uses); a `pinnedToBottom` flag
+means new content never yanks the view away from a manual scroll-back; and a long Foxy
+reply is now revealed at the pace of real speaking time (a new `speakingStarted` wire
+message carrying the already-known audio duration) instead of snapping to the bottom
+the instant its text is appended. The off icon now sits on the particle-cloud block's
+own top-right corner, not the conversation block's (superseding §39's placement).
+
+Two real bugs were found and fixed only by testing against the actual panel, not
+assumed from the code: recomputing `pinnedToBottom` on every content-height change
+(including a Foxy reply's own not-yet-scrolled growth) silently disabled the paced
+reveal on every single turn; and a 5-second "Piper failed" fallback timer was firing
+during perfectly ordinary synthesis of a long reply (bumped to 30s).
+
+- **Touch-drag scrolling itself was verified by code review and by matching
+  `Slider.qml`'s already-hardware-proven `registerDrag` pattern, not by an actual
+  finger on the panel** — worth a real touch test at some point, though the underlying
+  mechanism (`TouchRouter.registerDrag`/`feed()`) is exactly what every other touch
+  control in this app already relies on in production, so no new risk is expected.
+
+## FOXY page: auto-scroll, top-right off icon, answer-time caption — done
+
+See `HISTORY.md` §39. All three verified live with real screenshots against the actual
+panel: the transcript now genuinely settles at the bottom even for long, multi-line-
+wrapping replies (a second `onContentHeightChanged` scroll trigger, not just
+`onCountChanged`); "Turn Foxy off" is now a compact top-right icon via a new, reusable
+`Ui/Section.qml` `headerTrailing` slot (also fixed a real layout bug found only by
+screenshotting: a full-size touch button centered on the label row still overhung into
+the content area — the header row now genuinely grows to fit it); and each Foxy reply
+shows a small "3.2s"-style caption for how long the "thinking" phase took, honestly
+including a failed Hermes attempt's own wait when it fell back to Claude.
+
+- Nothing outstanding from this pass — `PersonalCarePage.qml`/`SettingsPage.qml`'s
+  existing `Section` usage was screenshot-confirmed unaffected by the `headerTrailing`
+  addition.
+
 ## Foxy's brain moves to Hermes over Tailscale, Claude fallback — done, two real gaps remain
 
 See `HISTORY.md` §38. `askHermes()` (SSH + the `hermes` CLI against a dedicated `foxy`

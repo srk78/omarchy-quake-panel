@@ -32,12 +32,17 @@ QtObject {
     // nothing to show anyway, so turning Foxy back on starts clean. This is a purely
     // visual reset; the daemon's own --resume session memory is untouched.
     property ListModel transcript: ListModel {}
-    function _appendLine(role, body) {
-        root.transcript.append({ role: role, body: body })
+    // durationMs: how long Foxy's brain took to answer (0 for anything but a real foxy
+    // reply) — see Pages/PaPage.qml's transcript delegate for where it's shown.
+    function _appendLine(role, body, durationMs) {
+        root.transcript.append({ role: role, body: body, durationMs: durationMs || 0 })
         if (root.transcript.count > 200) root.transcript.remove(0) // simple cap, not expected to matter in practice
     }
 
     property string lastError: ""
+    // Relayed straight from the bridge (see PaBridge.qml's own comment) — Pages/PaPage.qml
+    // listens directly to pace the transcript's auto-scroll to real speaking time.
+    signal speakingStarted(real durationMs)
 
     function beginTurn() {
         if (root.busy) return
@@ -80,11 +85,12 @@ QtObject {
             if (state.continuous !== undefined) root.continuousMode = state.continuous
         }
         function onTranscript(text) { root._appendLine("user", text) }
-        function onReply(text) { root._appendLine("foxy", text) }
+        function onReply(text, durationMs) { root._appendLine("foxy", text, durationMs) }
         function onDaemonError(message) {
             root.lastError = message
             root._appendLine("error", message)
         }
         function onAudioLevel(value) { root.audioLevel = value }
+        function onSpeakingStarted(durationMs) { root.speakingStarted(durationMs) }
     }
 }

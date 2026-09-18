@@ -26,13 +26,38 @@ Item {
     default property alias content: contentColumn.data
     property alias button: buttonLoader.sourceComponent
     property alias button2: button2Loader.sourceComponent
+    // Optional content in the header row's own trailing (right) slot, vertically
+    // centered against the label — e.g. Pages/PaPage.qml's top-right FOXY off icon.
+    // The header row's own height grows to fit whichever is taller (the label or this),
+    // so `contentColumn` below (anchored to `header.bottom`) always starts clear of it —
+    // no manual margin-tuning needed to avoid an overlap, by construction.
+    property alias headerTrailing: headerTrailingLoader.sourceComponent
     height: parent.height
 
     Column {
         id: header
         width: parent.width
         spacing: section.theme.spacing.rowGap
-        SectionLabel { theme: section.theme; icon: section.icon; text: section.label }
+        Item {
+            width: parent.width
+            // Column positioners size children by `height`, not `implicitHeight` — this
+            // must be an explicit height binding, not implicitHeight, or Column would
+            // treat this wrapper as zero-height and stack the separator right through it.
+            height: Math.max(sectionLabel.implicitHeight,
+                headerTrailingLoader.item ? headerTrailingLoader.item.implicitHeight : 0)
+            SectionLabel {
+                id: sectionLabel
+                theme: section.theme
+                icon: section.icon
+                text: section.label
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Loader {
+                id: headerTrailingLoader
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.right: parent.right
+            }
+        }
         SectionSeparator { theme: section.theme }
     }
     Column {
