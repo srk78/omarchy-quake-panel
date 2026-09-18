@@ -60,6 +60,10 @@ Item {
         pageNames: root.pageNames
         pageIndex: root.pageIndex
         continuousListening: root.paState.continuousMode
+        touchRouter: root.touchRouter
+        // "Stop", not toggle — this control only ever means stopping Foxy (the dot,
+        // and its tap target, aren't even visible when Foxy's already off).
+        onStopRequested: root.paState.setContinuousMode(false)
     }
 
     Loader {

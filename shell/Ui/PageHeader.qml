@@ -17,6 +17,12 @@ Item {
     // PaPage.qml itself, specifically because it keeps listening no matter which page
     // is on screen; this is the one piece of chrome every page already shares.
     property bool continuousListening: false
+    // Optional — same null-default convention Ui/PanelButton.qml uses. Only needed for
+    // the dot's own tap target below; every other property here stays plain display
+    // data, so this file still doesn't reach into PaState itself — it just emits
+    // stopRequested() and leaves what "stop" means to the caller (Ui/PageHost.qml).
+    property var touchRouter: null
+    signal stopRequested()
 
     readonly property color dim: theme.secondaryForeground
     implicitHeight: Math.max(iconText.implicitHeight, labels.implicitHeight, trailing.implicitHeight)
@@ -140,6 +146,31 @@ Item {
                 loops: Animation.Infinite
                 NumberAnimation { from: 1.0; to: 0.25; duration: 900; easing.type: Easing.InOutQuad }
                 NumberAnimation { from: 0.25; to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
+            }
+
+            // The dot's own real hit-area — deliberately separate from the dot itself,
+            // which stays tiny/subtle on purpose (see the dot's own comment above). A
+            // 7px touch target is unreliable on a real touchscreen, so this is a
+            // same-centered, invisible, comfortably-sized target instead — Ui/Slider.
+            // qml's own thumb size (a small circular touch target), not this app's full
+            // touchControlHeight, which is sized for primary buttons, not a header
+            // accent. A CHILD of the dot (not a Row sibling) specifically so
+            // `anchors.centerIn` is even legal here — Row positioners forbid
+            // left/right/centerIn/fill anchors on their own direct children (confirmed
+            // live: it silently breaks the WHOLE Row's layout, not just this item, if
+            // violated). Still sets its OWN `visible` explicitly rather than relying on
+            // inheriting the dot's: TouchRouter._hitTestIn checks the registered item's
+            // own `visible` property, not an effective/inherited one, so tapping where
+            // the dot would be while Foxy is off (both hidden) still correctly does
+            // nothing only because this line says so, not because it's nested inside a
+            // hidden parent.
+            Item {
+                id: continuousDotHitArea
+                visible: root.continuousListening
+                width: root.theme.space(32); height: width
+                anchors.centerIn: parent
+                Component.onCompleted: if (root.touchRouter) root.touchRouter.registerTap(continuousDotHitArea, function () { root.stopRequested() })
+                Component.onDestruction: if (root.touchRouter) root.touchRouter.unregisterTap(continuousDotHitArea)
             }
         }
 

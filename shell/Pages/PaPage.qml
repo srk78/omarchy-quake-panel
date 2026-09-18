@@ -252,29 +252,15 @@ Item {
                 }
             }
 
-            // Wrapped together (rather than anchored as a loose sibling in pageRow) so
-            // the off icon can sit at THIS block's own top-right corner, not the
-            // conversation block's — FoxyVisualizer itself stays untouched, a focused
-            // rendering component with no chrome of its own.
-            Item {
+            // Stopping Foxy no longer has a dedicated control on this page at all — the
+            // pulsing "continuous listening" dot in the shared page header
+            // (Ui/PageHeader.qml, via Ui/PageHost.qml) does that job now.
+            FoxyVisualizer {
+                theme: root.theme
                 width: pageRow.visualizerWidth
                 height: pageRow.height
-
-                FoxyVisualizer {
-                    anchors.fill: parent
-                    theme: root.theme
-                    audioLevel: root.paState.audioLevel
-                    status: root.paState.status
-                }
-
-                PanelButton {
-                    theme: root.theme
-                    touchRouter: root.touchRouter
-                    icon: "󰍭"
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    onActivated: root.paState.toggleContinuousMode()
-                }
+                audioLevel: root.paState.audioLevel
+                status: root.paState.status
             }
         }
     }

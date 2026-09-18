@@ -1706,6 +1706,7 @@ confirmed by the user on the real hardware.
 | FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |
 | FOXY robust auto-scroll, top-right off icon, answer-time caption (§39) | `shell/Pages/PaPage.qml`'s `onContentHeightChanged`/duration delegate; `shell/Ui/Section.qml`'s `headerTrailing`; `shell/Ui/PanelButton.qml`'s icon-only sizing; `daemon/src/paBridge.js`'s `thinkingStartedAt`/`durationMs` |
 | FOXY transcript touch scroll-back, speech-paced reveal (§40) | `shell/Pages/PaPage.qml`'s `transcriptView` (`registerDrag`/`pinnedToBottom`/`pacedScroll`); `daemon/src/paBridge.js`'s `speakingStarted` message; `shell/Services/PaBridge.qml`/`PaState.qml`'s `speakingStarted` signal |
+| Stop-Foxy control: the header's pulsing dot (§41) | `shell/Ui/PageHeader.qml`'s `continuousDotHitArea`/`stopRequested`; `shell/Ui/PageHost.qml`'s `onStopRequested` |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
@@ -2014,3 +2015,48 @@ confirmed live via screenshot sitting correctly over the particle cloud.
 Touch-drag scrolling itself was verified by code review and by matching `Slider.qml`'s
 already-hardware-proven `registerDrag` pattern exactly, not by an actual finger on the
 panel this session — see `NEXT_STEPS.md`.
+
+## 41. Stopping Foxy moves from a dedicated icon to the header's own pulsing dot (2026-09-18)
+
+Per the user's explicit request: the top-right icon on the particle-cloud block (§39/
+§40) is gone entirely; the pulsing "continuous listening" dot in the shared page header
+(`Ui/PageHeader.qml` — already shown on every page, not just FOXY, and already only
+visible while Foxy is on) now does that job instead.
+
+`PageHeader.qml` gained a `touchRouter` prop and a `stopRequested()` signal — kept in
+the same generic style the rest of that file already has (plain display data in, one
+signal out); it still doesn't reach into `PaState` itself, leaving what "stop" means to
+the caller. `Ui/PageHost.qml` wires `touchRouter` in and connects
+`onStopRequested: root.paState.setContinuousMode(false)` — `setContinuousMode`, not
+`toggleContinuousMode`, since this control only ever means "stop" (it's unreachable
+when Foxy's already off anyway, since the dot is hidden then too).
+
+The dot itself (`theme.space(7)`, deliberately tiny/subtle) stays visually untouched —
+a real hit-area that small is unreliable on a touchscreen, so a separate, invisible,
+`theme.space(32)` `Item` (matching `Ui/Slider.qml`'s own thumb-size precedent for a
+small circular touch target) is what's actually registered with `TouchRouter`, sized
+generously around the dot and centered on it. Its own `visible` explicitly mirrors the
+dot's (`TouchRouter._hitTestIn` checks the registered item's *own* `visible`, which
+does not automatically follow a parent's) — confirmed live that tapping where the dot
+would be while Foxy is off correctly does nothing.
+
+**A real, load-time-only bug caught live, not by `qmllint`** (clean on this file both
+times): the hit-area was first written as a sibling of the dot inside the header's
+`trailing` `Row`, positioned via `anchors.centerIn: continuousDot`. Row positioners
+explicitly forbid `left`/`right`/`horizontalCenter`/`fill`/`centerIn` anchors on their
+own direct children — violating that didn't just fail to position this one item, it
+silently broke the ENTIRE Row's layout (confirmed via the exact runtime warning: "Row
+will not function"), collapsing every page's header down to a sliver on the right
+(tabs, dot, and clock all missing) while `qmllint` stayed clean on the file both before
+and after — the same class of load-time-only gap already documented in `HISTORY.md`
+§9. Fixed by nesting the hit-area as an actual CHILD of the dot `Rectangle` instead
+(not a `Row` child at all), where `anchors.centerIn: parent` is completely legal.
+
+Verified live end-to-end, not just by code review this time: a temporary debug path
+resolved the hit-area's real screen position via `mapToItem` and fed a synthetic point
+through the actual `TouchRouter.feed()` entry point (not a direct property call) at
+that exact position — confirmed it genuinely turns Foxy off, and that the same tap
+while Foxy is already off (dot hidden) does nothing. All temporary debug plumbing
+(an IPC hook, a couple of `id`/alias exposures threaded through `Service.qml` →
+`PageHost.qml` → `PageHeader.qml` purely to reach the dot's position for this test)
+removed before finishing.

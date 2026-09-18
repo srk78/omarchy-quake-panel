@@ -3,6 +3,21 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## Stop-Foxy control moved to the header's pulsing dot — done
+
+See `HISTORY.md` §41. The top-right icon on the particle-cloud block is gone; tapping
+the pulsing "continuous listening" dot in the shared page header now stops Foxy
+instead, via a real (comfortably-sized, invisible) hit-area around the visually
+unchanged tiny dot. Verified live end-to-end, not just by code review: a synthetic
+touch point fed through the actual `TouchRouter.feed()` path confirmed the tap genuinely
+turns Foxy off, and does nothing while the dot is already hidden (Foxy off). A real
+Row-layout bug (anchoring a child to a sibling inside a `Row` silently breaks the
+WHOLE row, not just that child) was caught live and fixed along the way — `qmllint`
+stayed clean throughout, another instance of the load-time-only gap `HISTORY.md` §9
+already documented.
+
+- Nothing outstanding from this pass.
+
 ## FOXY transcript: touch scroll-back, speech-paced reveal, off icon's real home — done, one gap remains
 
 See `HISTORY.md` §40. The transcript can now be scrolled back by touch (`TouchRouter.
