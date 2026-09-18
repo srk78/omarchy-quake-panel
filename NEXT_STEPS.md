@@ -3,6 +3,38 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## Foxy's Hermes latency fixed: warm gateway HTTP API, not a cold CLI — done
+
+See `HISTORY.md` §42. Root-caused the reported ~30s Foxy latency (vs. Signal/Telegram's
+own much faster replies): the `hermes chat --oneshot` CLI call itself hung for 24-99s
+*after* already producing the correct answer, fighting the already-running Hermes
+gateway daemon over shared local state. Fixed by having `askHermes()` talk directly to
+that gateway's own documented HTTP API Server instead (`POST`/poll `GET
+/p/foxy/v1/runs/...`) — the same warm process Signal/Telegram already use. Verified live:
+full turns (including a real multi-turn session-continuity check) now complete in
+7-10 seconds, down from 30-100+; cancel and the Claude-fallback path both still work
+exactly as before.
+
+- **Signal/Telegram were never literally instant either** — cross-checked the gateway's
+  own logs and found their real response times run 5-20+ seconds depending on tool-call
+  complexity, the same honest range Foxy now sees. The fix eliminates the CLI-specific
+  overhead on top of that, it doesn't (and can't) make the underlying ~35B local model
+  itself instant.
+- **A real secret exposure happened this session, not a code bug**: diagnosing why the
+  API server wouldn't start required reading the Pi's `~/.hermes/.env`, which printed
+  real Signal/Slack/Telegram bot tokens into the assistant's context. Nothing was
+  written anywhere from it, but **the user may want to rotate those credentials** as a
+  precaution.
+- `OQP_PA_HERMES_API_HOST`/`_PORT`/`_PROFILE`/`_TIMEOUT_MS` are env-overridable but
+  default to this specific Pi/profile — a different machine needs its own values. The
+  API key itself lives in `~/.config/omarchy-quake-panel/config.json`'s new
+  `hermes.apiKey` field (outside git, matching the existing Home Assistant credential
+  convention), not an env var.
+- The gateway's `/v1/runs/{id}/stop` cancel call is fire-and-forget (matches this
+  project's existing "best-effort" stance elsewhere) — not independently confirmed
+  server-side that a cancelled run's inference actually halts immediately on the Mac
+  Studio, only that Foxy's own UI stops waiting/listening for it correctly.
+
 ## Stop-Foxy control moved to the header's pulsing dot — done
 
 See `HISTORY.md` §41. The top-right icon on the particle-cloud block is gone; tapping

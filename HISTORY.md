@@ -1701,7 +1701,7 @@ confirmed by the user on the real hardware.
 | PA "Hey Foxy" wake-word mode (§26, §31, §33) | `daemon/src/paTools/wakeword.py` (`nanowakeword.NanoInterpreter`, model at `daemon/src/paTools/models/hey_foxy.onnx`, overridable via `OQP_PA_WAKEWORD_MODEL`/`_THRESHOLD`), `daemon/src/paBridge.js`'s `startListener`/`stopListener`, `Ui/PageHeader.qml`'s pulsing dot |
 | PA Home Assistant control (§29) | `daemon/src/paTools/server.js`'s HA tools, `daemon/src/paBridge.js`'s `OQP_PA_TURN_ID`; credentials at `~/.config/omarchy-quake-panel/config.json` (not in the repo) |
 | PA persistent memory, knob-press cancel, session reset (§37) | `daemon/src/paTools/server.js`'s `remember_fact`/`forget_fact`/`list_remembered_facts`; `daemon/src/paBridge.js`'s `loadMemoryForPrompt`/`activeChild`/`turnWasCancelled`/`_armSessionIdleReset`; `shell/Services/KnobRouter.qml`'s FOXY press; memory file at `~/.local/state/omarchy-quake-panel/foxy-memory.json` |
-| Foxy's primary brain: self-hosted Hermes over Tailscale/SSH, Claude fallback (§38) | `daemon/src/paBridge.js`'s `askHermes`/`killRemoteHermesTurn`/`hermesSessionId`; fallback path is the original `askClaude`/`claudeSessionId`, untouched; Hermes-side persona at `~/.hermes/profiles/foxy/SOUL.md` on the Pi (not in this repo) |
+| Foxy's primary brain: self-hosted Hermes, Claude fallback (§38, now via HTTP §42) | `daemon/src/paBridge.js`'s `askHermes`/`hermesSessionId`, talking to the gateway's own API server (`HERMES_API_BASE`, key in `~/.config/omarchy-quake-panel/config.json`'s `hermes.apiKey`); fallback path is the original `askClaude`/`claudeSessionId`, untouched; Hermes-side persona at `~/.hermes/profiles/foxy/SOUL.md` on the Pi (not in this repo) |
 | FOXY's 3D particle visualizer (§30) | `shell/Ui/FoxyVisualizer.qml`, `daemon/src/paBridge.js`'s `computeAudioEnvelope`/`speak()`; needs the `qt6-quick3d` system package |
 | FOXY on/off, auto-follow-up listening, scrolling transcript (§31) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`'s `transcript` `ListModel`, `daemon/src/paBridge.js`'s `autoListenAfterReply`, `shell/Ui/Section.qml`'s content-area anchoring |
 | FOXY robust auto-scroll, top-right off icon, answer-time caption (§39) | `shell/Pages/PaPage.qml`'s `onContentHeightChanged`/duration delegate; `shell/Ui/Section.qml`'s `headerTrailing`; `shell/Ui/PanelButton.qml`'s icon-only sizing; `daemon/src/paBridge.js`'s `thinkingStartedAt`/`durationMs` |
@@ -2060,3 +2060,74 @@ while Foxy is already off (dot hidden) does nothing. All temporary debug plumbin
 (an IPC hook, a couple of `id`/alias exposures threaded through `Service.qml` →
 `PageHost.qml` → `PageHeader.qml` purely to reach the dot's position for this test)
 removed before finishing.
+
+## 42. Fixing Foxy's ~30s Hermes latency: the warm gateway's own HTTP API, not a cold CLI (2026-09-18)
+
+The user reported Signal/Telegram get near-instant Hermes replies while Foxy routinely
+took ~30 seconds. Investigated empirically rather than guessed, by timing the exact
+SSH+CLI call `askHermes()` made (§38): plain SSH overhead was ~0.4s (not it); the actual
+model call itself, per `hermes chat -v`'s own log, took **~5 seconds** and the correct
+answer was already printed to stdout — but the `hermes chat --oneshot` process didn't
+*exit* until **24-99 seconds later** (varied across runs), ending in `Timeout, server
+hermes not responding.` on stderr, with a real title-generation lock collision visible
+in the verbose log along the way (`ValueError: Title '...' is already in use by session
+...`). Since `paBridge.js`'s `execFile()` only resolves on process exit, that hang WAS
+the entire delay — not the model, not the network.
+
+Root cause: `hermes chat` is a cold, one-shot CLI process (fresh Python interpreter,
+full framework import, tool/skill registration) that also contends with the
+ALREADY-RUNNING Hermes gateway daemon over shared local state. Signal/Telegram never pay
+any of this because they're handled *inside* that already-warm gateway process directly
+— confirmed running as a real systemd user service, `hermes-gateway.service`.
+
+**The fix: talk to that same warm gateway's own documented API Server** (a stable,
+OpenAI-compatible HTTP surface built into the gateway — unlike the WebSocket "connector"
+looked at in §38, which is marked experimental with no public reference implementation).
+No new process, no SSH, no CLI cold start.
+
+**Real setup gotchas, found only by testing against the actual box, not from the docs
+alone**: `API_SERVER_ENABLED=true` in the Pi's `~/.hermes/.env` did nothing by itself —
+reading the actual installed source (`gateway/config_env.py`'s `_api_server()`) showed
+the platform only activates when a *usable* `API_SERVER_KEY` is present in the
+**default/global** profile's own env, entirely separate from the per-profile key each
+named profile (`/p/foxy/...`) additionally needs for its own routes. Foxy's own `foxy`
+profile already had a key; the global listener didn't, so nothing ever bound to a port
+at all — confirmed via `ss -tlnp` showing no listener until a second, distinct key was
+added to the global `.env` too. `gateway.multiplex_profiles` was already enabled.
+`API_SERVER_HOST` was bound to the Pi's own Tailscale IP specifically (not `0.0.0.0`),
+since the docs are explicit that this endpoint grants full tool/terminal access gated
+only by its bearer key.
+
+**An important nuance surfaced while verifying the fix**: cross-checking the gateway's
+own log for Signal's *actual* historical response times found `time=5.4s`, `time=15.6s`,
+`time=20.0s`, `time=5.8s` — Signal was never literally instant either; the model itself
+(a 35B Qwen model via Ollama on the Mac Studio) genuinely takes several seconds to two
+dozen, depending on tool-call complexity. What Foxy's fix eliminates is the ~25-90s of
+pure CLI overhead sitting on top of that honest latency — matching Signal/Telegram's
+real-world timing, not making Foxy literally instant.
+
+**`daemon/src/paBridge.js`'s `askHermes()` rewritten**: `POST /p/foxy/v1/runs` (`{input,
+session_id}`) returns a `run_id` immediately; polls `GET /p/foxy/v1/runs/{run_id}` every
+400ms until `completed`/`failed`/`cancelled`. `session_id` from a completed run is fed
+back into the next call exactly the role `--resume` played before. Cancellation keeps
+`cancelTurn()`'s existing generic `activeChild.kill()` call completely unchanged — for
+this path `activeChild` is a small object whose `kill()` aborts the in-flight fetch,
+stops the poll loop, and best-effort calls the API's own documented `POST .../stop` —
+replacing the old SSH-pkill remote-orphan workaround entirely (the gateway owns its own
+run lifecycle; there's no separate remote process to hunt down anymore). The
+`API_SERVER_KEY` itself is a real secret, stored in
+`~/.config/omarchy-quake-panel/config.json` under a new `hermes.apiKey` field — the same
+file/convention `paTools/server.js` already uses for Home Assistant credentials, not an
+`OQP_PA_*` env var.
+
+Verified live end-to-end: a real turn (with a genuine, correct session-continuity
+follow-up: "remember pineapple" → "what word did I just ask you to remember?" →
+correctly answered) completed in **7-10 seconds** total, down from 30-100+; cancelling
+mid-"thinking" stopped immediately with no errors; the fallback-to-Claude path (forced
+via an unreachable host) still works and still audibly announces itself, unchanged.
+
+**A real secret-exposure incident, not a code bug**: reading the Pi's `~/.hermes/.env`
+to diagnose the missing listener printed real Signal/Slack/Telegram bot tokens into this
+session's context while investigating. Nothing was written anywhere from it and no value
+appears in this file, but the user was told directly and may want to rotate those
+credentials out of caution.

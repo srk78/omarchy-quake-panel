@@ -2,13 +2,17 @@
 'use strict';
 /*
  * paBridge.js — orchestrates the "PA" voice-agent turn loop: Voxtype (local speech-to-
- * text) -> Hermes, a self-hosted agent harness reached over Tailscale via SSH (see
- * askHermes()), falling back to the `claude` CLI (a real agent, given tools via
- * paTools/server.js) when Hermes is unreachable -> Piper (local text-to-speech) -> a
- * spoken/shown reply. See HISTORY.md for the design brainstorm this implements — Phase A
- * (manual push-to-talk), Phase B (spoken replies), Phase C (continuous "wake word" mode),
- * and Phase D (Home Assistant control, Claude-fallback-path only) are done; the Hermes
- * primary brain is its own later addition (see HISTORY.md's Hermes section).
+ * text) -> Hermes, a self-hosted agent harness whose already-running gateway process
+ * (the same one Signal/Telegram talk to) exposes an OpenAI-compatible HTTP API over
+ * Tailscale (see askHermes()), falling back to the `claude` CLI (a real agent, given
+ * tools via paTools/server.js) when Hermes is unreachable -> Piper (local text-to-speech)
+ * -> a spoken/shown reply. See HISTORY.md for the design brainstorm this implements —
+ * Phase A (manual push-to-talk), Phase B (spoken replies), Phase C (continuous "wake
+ * word" mode), and Phase D (Home Assistant control, Claude-fallback-path only) are done;
+ * the Hermes primary brain is its own later addition (see HISTORY.md's Hermes sections —
+ * originally SSH + a one-shot CLI call, later moved to the gateway's own warm HTTP API
+ * once the CLI's cold-start overhead turned out to be adding 25-90s on top of the
+ * model's own honest multi-second latency).
  *
  * A second, independent daemon process from bridge.js/HidBridge.qml on purpose: this one
  * shells out to much slower, heavier, more experimental things (an LLM CLI call can take
@@ -89,25 +93,44 @@ const WAKEWORD_SCRIPT = path.join(__dirname, 'paTools', 'wakeword.py');
 const WAKEWORD_PYTHON = process.env.OQP_PA_WAKEWORD_PYTHON || 'python3';
 const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '6000', 10);
 
-// Foxy's primary brain: Stefan's own self-hosted agent harness, "Hermes," reached over
-// Tailscale via plain SSH + the `hermes` CLI — not a new network protocol. Hermes is
-// CLI-driven and structurally close to `claude` itself (profiles, sessions, one-shot
-// invocation), so this mirrors askClaude() below almost exactly, just a different binary/
-// host. Hermes also documents a WebSocket "connector" protocol for platform integrations,
-// but it's marked experimental with no accessible reference implementation (its own repo,
-// NousResearch/gateway-gateway, isn't public — confirmed 404) — SSH+CLI sidesteps
-// reverse-engineering that from a doc description alone.
-const HERMES_SSH_HOST = process.env.OQP_PA_HERMES_HOST || 'hermes';
-const HERMES_SSH_USER = process.env.OQP_PA_HERMES_SSH_USER || 'stefan';
-const HERMES_BIN = process.env.OQP_PA_HERMES_BIN || '/home/stefan/.local/bin/hermes';
+// Foxy's primary brain: Stefan's own self-hosted agent harness, "Hermes." Originally
+// reached over SSH + the `hermes` CLI, which turned out to add 25-90s of pure CLI
+// cold-start/housekeeping overhead on top of the model's own honest multi-second
+// latency (confirmed live via `hermes chat -v`'s own timing log, and a real
+// "Timeout, server hermes not responding" hang after the answer had already printed —
+// see HISTORY.md). Now talks straight to the already-running Hermes gateway's own
+// OpenAI-compatible HTTP API — the SAME warm process Signal/Telegram already get their
+// own (honestly not-instant, 5-20s) replies from, reached over Tailscale, no SSH and no
+// per-turn process spawn at all. Hermes also documents a WebSocket "connector" protocol
+// for platform integrations, but it's marked experimental with no accessible reference
+// implementation (its own repo, NousResearch/gateway-gateway, isn't public — confirmed
+// 404) — the API server is the stable, documented surface instead.
+const HERMES_API_HOST = process.env.OQP_PA_HERMES_API_HOST || '100.67.225.62';
+const HERMES_API_PORT = process.env.OQP_PA_HERMES_API_PORT || '8642';
 // A dedicated profile (not "default") so Foxy's own conversation history/config is
 // isolated from whatever else Hermes is used for (its own Discord/Telegram gateway, the
 // user's own direct `hermes chat` use). Foxy's voice-friendly persona (formerly this
-// file's own SYSTEM_PROMPT below, now Hermes-side) lives in this profile's own SOUL.md —
-// see HISTORY.md for the exact wording ported over.
+// file's own SYSTEM_PROMPT below, now Hermes-side) lives in this profile's own SOUL.md.
+// Routed via the gateway's own multi-profile path (gateway.multiplex_profiles, already
+// enabled) — /p/<profile>/... — each profile authenticates with its OWN API_SERVER_KEY,
+// never the default listener's.
 const HERMES_PROFILE = process.env.OQP_PA_HERMES_PROFILE || 'foxy';
-const HERMES_CONNECT_TIMEOUT_S = parseInt(process.env.OQP_PA_HERMES_CONNECT_TIMEOUT_S || '8', 10);
+const HERMES_API_BASE = `http://${HERMES_API_HOST}:${HERMES_API_PORT}/p/${HERMES_PROFILE}`;
 const HERMES_TIMEOUT_MS = parseInt(process.env.OQP_PA_HERMES_TIMEOUT_MS || '60000', 10);
+const HERMES_POLL_MS = 400; // how often to check run status — imperceptible at voice-UI timescales
+
+// The API key is a real secret — kept in the same place paTools/server.js's own
+// loadHaConfig() already keeps Home Assistant's, not an OQP_PA_* env var (this project's
+// existing style splits credentials into this file, tunables into env vars).
+const CONFIG_FILE = path.join(os.homedir(), '.config', 'omarchy-quake-panel', 'config.json');
+function loadHermesApiKey() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    return (cfg.hermes && cfg.hermes.apiKey) || null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Same file paTools/server.js's remember_fact/forget_fact tools write to — no shared
 // module between this process and that one, just an agreed-upon path/shape, matching
@@ -429,30 +452,6 @@ function stopContinuous() {
   emitState();
 }
 
-// Confirmed live: killing the LOCAL ssh client (SIGKILL — what cancelTurn() does to
-// activeChild) does NOT kill the REMOTE hermes process. SSH without a pseudo-tty doesn't
-// propagate the hangup, so the remote `hermes chat` invocation just keeps running,
-// abandoned, burning the Pi's CPU/GPU on a reply nobody will ever hear. This is the
-// fix: a best-effort, fire-and-forget second SSH call targeting exactly this turn's own
-// unique remote prompt-file path (never ambiguous with any other turn, past or
-// concurrent). Nothing reacts to its result either way — a cancel has already ended the
-// turn locally regardless of whether this cleanup actually lands.
-function killRemoteHermesTurn(remoteTmpPath) {
-  execFile('ssh', [
-    '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${HERMES_CONNECT_TIMEOUT_S}`,
-    `${HERMES_SSH_USER}@${HERMES_SSH_HOST}`,
-    'pkill', '-9', '-f', remoteTmpPath,
-  ], () => { /* best-effort cleanup only */ });
-}
-
-// Foxy's primary brain. promptText is written to a remote temp file rather than ever
-// being interpolated into the SSH command string — confirmed live that hermes chat's own
-// --query-file "is safe for arbitrary text: nothing is shell-interpreted, so quotes,
-// $(...), and backticks are preserved verbatim," which matters here because promptText is
-// real speech-to-text output the user doesn't control the shape of. The file itself is
-// written by piping promptText over this SAME ssh connection's stdin to `cat >
-// <remoteTmpPath>` — one round trip, and the prompt's bytes never appear on any command
-// line, local or remote.
 // Set once per turn, here — the sole entry point into "thinking" — and read by whichever
 // success branch eventually emits a reply (askHermes()'s own, or askClaude()'s when
 // called as Hermes' fallback below). Deliberately NOT reset on a fallback: the reported
@@ -460,48 +459,95 @@ function killRemoteHermesTurn(remoteTmpPath) {
 // time the user was kept waiting, not just the fallback's own faster half.
 let thinkingStartedAt = 0;
 
+// Foxy's primary brain. POSTs to the gateway's own Runs API (a real agent turn, running
+// inside the SAME warm process Signal/Telegram use) and polls for completion — no SSH,
+// no process spawn, no CLI cold-start. `activeChild` here is a plain object (not a real
+// ChildProcess) whose `kill()` method cancelTurn() already calls generically for every
+// other phase — aborts the in-flight fetch, stops the poll loop, and best-effort tells
+// the gateway to actually stop the run server-side via its own documented /stop endpoint
+// (replacing the old SSH-pkill workaround entirely; there's no remote orphan process to
+// hunt down here, the gateway owns its own run lifecycle).
 function askHermes(promptText) {
   setStatus('thinking');
   thinkingStartedAt = Date.now();
-  const remoteTmpPath = `/tmp/oqp-hermes-turn-${Date.now()}.txt`;
-  // hermesSessionId only ever comes from Hermes' own stderr (see below), never from user
-  // input — but it still gets validated before being concatenated into the remote command
-  // string, on principle, rather than trusted just because today's observed format
-  // (e.g. "20260917_193541_f98de1") happens to look safe.
-  const resumeArg = (hermesSessionId && /^[A-Za-z0-9_.:-]+$/.test(hermesSessionId))
-    ? ` --resume ${hermesSessionId}`
-    : '';
-  const remoteCommand = `cat > ${remoteTmpPath} && ${HERMES_BIN} chat --query-file ${remoteTmpPath} `
-    + `--oneshot -Q -p ${HERMES_PROFILE} --source tool${resumeArg}; rm -f ${remoteTmpPath}`;
-  const child = execFile('ssh', [
-    '-o', 'BatchMode=yes', '-o', `ConnectTimeout=${HERMES_CONNECT_TIMEOUT_S}`,
-    `${HERMES_SSH_USER}@${HERMES_SSH_HOST}`,
-    remoteCommand,
-  ], { timeout: HERMES_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-    if (activeChild === child) activeChild = null;
-    if (turnWasCancelled) { killRemoteHermesTurn(remoteTmpPath); return; }
-    if (err) {
-      // Anything here — a down Pi, a dead tailnet link, ssh's own ConnectTimeout firing,
-      // hermes itself erroring — looks the same from this side: unreachable. Falls back
-      // to the exact same claude CLI path this file used exclusively before Hermes
-      // existed, so pomodoro/memory/HA tools even keep working during a fallback.
-      console.error(`Hermes unreachable, falling back to Claude: ${err.message}${stderr ? ' - ' + stderr.trim() : ''}`);
-      askClaude(promptText, true);
-      return;
-    }
-    // Confirmed live: hermes chat -Q's plain-text stdout is exactly the reply and nothing
-    // else — the "session_id: <id>" line (and everything else: banners, warnings, "session
-    // found but has no messages" notices) rides stderr instead.
-    const m = /session_id:\s*(\S+)/.exec(stderr);
-    if (m) hermesSessionId = m[1];
-    const replyText = stdout.trim();
-    autoListenAfterReply = /\?["')\]]*$/.test(replyText.trim());
-    out({ t: 'reply', text: replyText, durationMs: Date.now() - thinkingStartedAt });
-    speak(replyText);
-  });
-  child.stdin.write(promptText);
-  child.stdin.end();
-  activeChild = child;
+  const apiKey = loadHermesApiKey();
+  if (!apiKey) {
+    console.error('Hermes unreachable, falling back to Claude: no API key configured (see ~/.config/omarchy-quake-panel/config.json)');
+    askClaude(promptText, true);
+    return;
+  }
+
+  const controller = new AbortController();
+  const deadline = Date.now() + HERMES_TIMEOUT_MS;
+  let pollTimer = null;
+  let runId = null;
+
+  activeChild = {
+    kill() {
+      controller.abort();
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      if (runId) {
+        fetch(`${HERMES_API_BASE}/v1/runs/${runId}/stop`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }).catch(() => { /* best-effort — cancelTurn() already ended the turn locally */ });
+      }
+    },
+  };
+
+  // Anything here — gateway down, tailnet link dead, a bad/rotated key, the run itself
+  // failing — looks the same from this side: unreachable. Falls back to the exact same
+  // claude CLI path this file used exclusively before Hermes existed, so pomodoro/
+  // memory/HA tools even keep working during a fallback.
+  function fail(reason) {
+    if (turnWasCancelled) return; // cancelTurn() already handled this
+    activeChild = null;
+    console.error(`Hermes unreachable, falling back to Claude: ${reason}`);
+    askClaude(promptText, true);
+  }
+
+  function poll() {
+    if (turnWasCancelled) return;
+    if (Date.now() > deadline) { fail('timed out waiting for the run to complete'); return; }
+    fetch(`${HERMES_API_BASE}/v1/runs/${runId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    })
+      .then(res => res.ok ? res.json() : Promise.reject(new Error(`run status HTTP ${res.status}`)))
+      .then(data => {
+        if (turnWasCancelled) return;
+        if (data.status === 'completed') {
+          activeChild = null;
+          // The gateway's own session id — analogous to what --resume used to carry —
+          // fed back as session_id on the NEXT run to keep this turn's conversation
+          // going; resetSession() clears it to start fresh.
+          if (data.session_id) hermesSessionId = data.session_id;
+          const replyText = String(data.output || '').trim();
+          autoListenAfterReply = /\?["')\]]*$/.test(replyText);
+          out({ t: 'reply', text: replyText, durationMs: Date.now() - thinkingStartedAt });
+          speak(replyText);
+        } else if (data.status === 'failed' || data.status === 'cancelled') {
+          fail(`run ${data.status}`);
+        } else {
+          pollTimer = setTimeout(poll, HERMES_POLL_MS);
+        }
+      })
+      .catch(err => { if (!turnWasCancelled) fail(err.message); });
+  }
+
+  fetch(`${HERMES_API_BASE}/v1/runs`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input: promptText, session_id: hermesSessionId || undefined }),
+    signal: controller.signal,
+  })
+    .then(res => res.ok ? res.json() : Promise.reject(new Error(`run creation HTTP ${res.status}`)))
+    .then(data => {
+      if (turnWasCancelled) return;
+      runId = data.run_id;
+      poll();
+    })
+    .catch(err => { if (!turnWasCancelled) fail(err.message); });
 }
 
 // The original brain, kept exactly as it was — now doubling as Foxy's fallback whenever
