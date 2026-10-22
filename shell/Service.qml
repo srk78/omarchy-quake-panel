@@ -304,6 +304,10 @@ Item {
             Connections {
                 target: root.personalCareState
                 function onReminder(message) { toastOverlay.show(message) }
+                function onTimeUp() {
+                    toastOverlay.show("Time's up...")
+                    root.paState.announce("Time's up...")
+                }
             }
 
             PageHost {

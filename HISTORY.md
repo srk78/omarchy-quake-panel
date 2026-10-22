@@ -1707,6 +1707,7 @@ confirmed by the user on the real hardware.
 | FOXY robust auto-scroll, top-right off icon, answer-time caption (§39) | `shell/Pages/PaPage.qml`'s `onContentHeightChanged`/duration delegate; `shell/Ui/Section.qml`'s `headerTrailing`; `shell/Ui/PanelButton.qml`'s icon-only sizing; `daemon/src/paBridge.js`'s `thinkingStartedAt`/`durationMs` |
 | FOXY transcript touch scroll-back, speech-paced reveal (§40) | `shell/Pages/PaPage.qml`'s `transcriptView` (`registerDrag`/`pinnedToBottom`/`pacedScroll`); `daemon/src/paBridge.js`'s `speakingStarted` message; `shell/Services/PaBridge.qml`/`PaState.qml`'s `speakingStarted` signal |
 | Stop-Foxy control: the header's pulsing dot (§41) | `shell/Ui/PageHeader.qml`'s `continuousDotHitArea`/`stopRequested`; `shell/Ui/PageHost.qml`'s `onStopRequested` |
+| Pomodoro + water + stand reminders; "Time's up" spoken announcement (§45) | `shell/Services/PersonalCareState.qml`'s `_onPhaseEnd`/`timeUp`; `shell/Services/PaState.qml`'s `announce`; `daemon/src/paBridge.js`'s `announce` stdin command |
 | Standalone dev entry point | `shell/shell.qml` |
 | Daemon↔QML bridge | `shell/Services/HidBridge.qml` |
 | Knob gesture table | `shell/Services/KnobRouter.qml` |
@@ -2248,3 +2249,38 @@ Flagged for the user: `mise` shadowing the system `python3` on `$PATH` is a stan
 environment hazard this project can't fix from inside the repo — worth checking first
 if any other Python-based tool on this machine breaks the same way after a future
 update.
+
+## 45. Pomodoro: announce "Time's up..." instead of auto-continuing into the next phase (2026-10-22)
+
+Requested behavior change: when a Pomodoro phase's countdown reaches 0, Foxy should
+say "Time's up..." out loud, and the next phase (work <-> break) should NOT start
+automatically — previously `PersonalCareState.qml`'s `_onPhaseEnd()` unconditionally
+called `_startPomodoro()` again right after flipping the phase, and the only feedback
+was a toast ("Work session done — take a break" / "Break's over — back to work").
+
+Changed `_onPhaseEnd()` to still flip the phase and bump `todayPomodoroCount` on a
+completed work phase, but then leave the session stopped — `pomodoroRunning = false`,
+`pausedRemainingMs`/`pomodoroPhaseEndsAt` reset to 0, same shape `resetPomodoro()`
+already leaves things in, so `PersonalCarePage.qml` needs no new state to show "just
+finished" — and emit a new `timeUp()` signal instead of the old phase-specific
+`reminder()` messages. Starting the next phase is now back to a normal manual
+`togglePomodoro()`/`startPomodoro()` call, same as any fresh session.
+
+Wiring the voice side needed a new way to make Foxy speak a line outside of a real
+conversation turn — until now `paBridge.js` only ever called `speak()` from inside
+`askHermes()`/`askClaude()`'s own reply path. Added a new stdin command,
+`{"cmd":"announce","text":"..."}`, handled by a new `announce()` function that calls
+`speak(text)` directly, dropped (not queued) if a real conversation turn is already in
+flight — talking over the user mid-reply would be more jarring than just missing one
+announcement, and a Pomodoro phase ending in that exact window is rare. `PaState.qml`
+gained a matching `announce(text)` wrapper, and `Service.qml` connects
+`PersonalCareState`'s new `timeUp()` signal to both a toast and
+`paState.announce("Time's up...")`.
+
+Verified live in the real deployed app via a temporary debug IPC hook
+(`debugPomodoroPhaseEnd()`, calling `_onPhaseEnd()` directly to avoid waiting out a
+real 25/5 minute phase — removed again before finishing): confirmed the phase flips
+and `pomodoroRunning` lands on `false` with no auto-restart, and confirmed via `ps aux`
+that the `announce` command actually drove a real `piper-tts` synthesis followed by a
+real `paplay` to the laptop's speaker sink — the full spoken-announcement pipeline
+works end to end, not just the state-machine change.

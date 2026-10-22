@@ -29,7 +29,7 @@
  *
  * stdin: one JSON command per line:
  *   {"cmd":"startTurn"} | {"cmd":"endTurn"} | {"cmd":"cancelTurn"} | {"cmd":"resetSession"}
- *   {"cmd":"startContinuous"} | {"cmd":"stopContinuous"}
+ *   {"cmd":"startContinuous"} | {"cmd":"stopContinuous"} | {"cmd":"announce","text":"..."}
  *
  * Voxtype integration deliberately uses its file-based, scriptable path rather than its
  * normal type-into-focused-window dictation behavior: `record start --file=<path>`
@@ -778,7 +778,20 @@ function stopAudioLevelPlayback() {
 
 function resetSession() { claudeSessionId = null; hermesSessionId = null; }
 
-const COMMANDS = { startTurn, endTurn, cancelTurn, resetSession, startContinuous, stopContinuous };
+// A one-off spoken line that isn't part of any conversation turn — e.g.
+// PersonalCareState.qml's timeUp signal (Pomodoro phase end), relayed through
+// Service.qml. Dropped rather than queued if a real conversation turn is already in
+// flight: talking over the user mid-reply would be more jarring than just missing this
+// one announcement, and the Pomodoro timer landing in that exact window is rare.
+function announce(cmd) {
+  const text = cmd && typeof cmd.text === 'string' ? cmd.text : '';
+  if (!text || turnInFlight) return;
+  turnInFlight = true;
+  turnWasCancelled = false;
+  speak(text);
+}
+
+const COMMANDS = { startTurn, endTurn, cancelTurn, resetSession, startContinuous, stopContinuous, announce };
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 rl.on('line', line => {
@@ -788,7 +801,7 @@ rl.on('line', line => {
   try { cmd = JSON.parse(line); } catch (e) { return out({ t: 'error', message: `bad command JSON: ${e.message}` }); }
   const fn = cmd && COMMANDS[cmd.cmd];
   if (!fn) return out({ t: 'error', message: `unknown command: ${cmd && cmd.cmd}` });
-  try { fn(); } catch (e) { out({ t: 'error', message: e.message }); }
+  try { fn(cmd); } catch (e) { out({ t: 'error', message: e.message }); }
 });
 
 process.on('SIGINT', () => { stopListener(); process.exit(0); });

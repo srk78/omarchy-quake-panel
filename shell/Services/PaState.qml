@@ -58,6 +58,12 @@ QtObject {
     function resetSession() {
         root.paBridge.sendCommand({ cmd: "resetSession" })
     }
+    // A one-off spoken line outside any conversation turn — e.g. the Pomodoro timer
+    // reaching 0 (see Service.qml's onTimeUp). Dropped by the daemon if a real
+    // conversation turn is already in flight — see paBridge.js's announce().
+    function announce(text) {
+        root.paBridge.sendCommand({ cmd: "announce", text: text })
+    }
     function setContinuousMode(on) {
         if (!on) {
             root.transcript.clear()

@@ -45,6 +45,20 @@ path and a clean journal; Piper's full synth -> `paplay` pipeline confirmed work
   go missing the same way `numpy` did here — noticed during this investigation, not
   yet corrected.
 
+## Pomodoro: "Time's up" spoken, no auto-continue — done
+
+See `HISTORY.md` §45. When a Pomodoro phase's countdown reaches 0, Foxy now says
+"Time's up..." out loud (via a new `announce` daemon command that speaks outside of
+a normal conversation turn) and the next phase no longer starts automatically — the
+user has to start it themselves, same as a fresh session. Verified live via a
+temporary debug hook: phase flips and stops correctly, and the announcement actually
+drove a real Piper synthesis + `paplay` to the speaker.
+
+- **Not yet tested**: a real, un-forced 25-minute work phase actually running to
+  completion and triggering this naturally (verification so far forced `_onPhaseEnd()`
+  directly to avoid the wait) — low risk since the same code path is exercised either
+  way, but worth noting it wasn't timed out for real.
+
 ## Foxy's Hermes latency fixed: warm gateway HTTP API, not a cold CLI — done
 
 See `HISTORY.md` §42. Root-caused the reported ~30s Foxy latency (vs. Signal/Telegram's

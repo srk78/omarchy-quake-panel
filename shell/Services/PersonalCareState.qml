@@ -12,6 +12,11 @@ QtObject {
     id: root
 
     signal reminder(string message)
+    // Emitted when a Pomodoro phase's countdown reaches 0 (work or break) — Service.qml
+    // has Foxy speak this out loud (see PaState.qml's announce()). Separate from
+    // reminder() because that one's just a toast; this one is meant to be heard even
+    // when you're not looking at the panel.
+    signal timeUp()
     // Emitted when the user wants to log water but hasn't picked an amount yet (knob hold,
     // or the on-screen button) — the UI shows WaterAmountPicker and calls logWater(ml)
     // once a choice is made. Kept separate from logWater() itself so both the knob and
@@ -250,15 +255,24 @@ QtObject {
         root._persist()
     }
 
+    // No longer auto-continues into the next phase (work <-> break) — the user has to
+    // start the next one themselves (togglePomodoro()/startPomodoro()), same as a fresh
+    // session. Leaves the phase already flipped and at full duration, not running —
+    // the same shape resetPomodoro() leaves things in, so PersonalCarePage.qml needs no
+    // extra state to tell "just finished" apart from "freshly reset".
     function _onPhaseEnd() {
         if (root.pomodoroPhase === "work") {
             root.todayPomodoroCount += 1
             root.pomodoroPhase = "break"
-            root.reminder("Work session done — take a break")
         } else {
             root.pomodoroPhase = "work"
-            root.reminder("Break's over — back to work")
         }
-        root._startPomodoro() // auto-continue into the next phase
+        root.pomodoroRunning = false
+        root.pausedRemainingMs = 0
+        root.pomodoroPhaseEndsAt = 0
+        pomodoroTimer.stop()
+        waterReminderTimer.stop() // scoped to the running session — see _pausePomodoro
+        root._persist()
+        root.timeUp()
     }
 }
