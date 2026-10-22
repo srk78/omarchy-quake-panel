@@ -3,6 +3,24 @@
 Actionable pending work, as of the end of the session that wrote `HISTORY.md`. Read that
 file first for context on *why* each of these is in the state it's in.
 
+## No-panel-at-boot kiosk guard — done
+
+See `HISTORY.md` §43. Booting the laptop with the DK-QUAKE panel unplugged no longer
+mounts the kiosk UI on the laptop's own screen — `shell/Service.qml`'s `kioskLoader`
+now also requires a real panel to have been seen (`_realPanelScreen`, or the new
+`_kioskEverMounted` latch once it has mounted at least once) before activating.
+Verified live with the user physically unplugging/replugging the real panel: boot with
+panel attached (no regression), boot with panel detached (no kiosk window on the
+laptop, confirmed via screenshot), and panel plugged in while already running (kiosk
+UI mounts automatically, no manual toggle needed).
+
+- **Not re-verified this session**: disconnecting the panel again *after* a successful
+  mount, to directly re-confirm the pre-existing §35 "leave the window alone" behavior
+  on a later mid-session disconnect. Guaranteed by construction (the latched `active`
+  expression is textually identical to the pre-fix one once `_kioskEverMounted` is
+  true), not by a fresh physical test — worth a quick live sanity check next time the
+  panel is unplugged for an unrelated reason, just to close the loop.
+
 ## Foxy's Hermes latency fixed: warm gateway HTTP API, not a cold CLI — done
 
 See `HISTORY.md` §42. Root-caused the reported ~30s Foxy latency (vs. Signal/Telegram's

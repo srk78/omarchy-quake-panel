@@ -106,6 +106,19 @@ Item {
         Qt.callLater(function () { root._forceKioskReload = false })
     }
 
+    // Set once the kiosk window has actually been mounted against a real panel at
+    // least once — never reset on a later disconnect. This is what lets a genuine
+    // mid-session unplug keep today's existing "leave the window alone" behavior
+    // (see _forceKioskReload's own comment, and HISTORY.md §35's screen-leak
+    // regression) completely untouched, while still blocking the window from ever
+    // being CREATED in the first place when no real panel has been seen yet this
+    // run — e.g. booting the laptop with the panel unplugged, where `panelScreen`
+    // would otherwise silently fall back to `Quickshell.screens[0]` (the laptop's
+    // own screen) and mount the kiosk UI right there. Confirmed live: before this,
+    // `kioskLoader.active` only checked `root.mode`, never whether a real panel
+    // actually existed to put it on.
+    property bool _kioskEverMounted: false
+
     // ---- Always-on, regardless of mode ----
     property HidBridge hidBridge: HidBridge { daemonPath: root.daemonPath }
     property SystemStats systemStats: SystemStats {}
@@ -251,8 +264,11 @@ Item {
     // (re-)entered — currentPageIndex resetting to Dashboard on re-entry is expected.
     Loader {
         id: kioskLoader
-        active: root.mode === "kiosk" && !root._forceKioskReload
+        active: root.mode === "kiosk"
+            && (root._realPanelScreen || root._kioskEverMounted)
+            && !root._forceKioskReload
         sourceComponent: kioskComponent
+        onActiveChanged: if (active) root._kioskEverMounted = true
     }
 
     Component {

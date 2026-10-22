@@ -1692,7 +1692,7 @@ confirmed by the user on the real hardware.
 | HID/USB driver | `daemon/src/Aris68Connector.js` |
 | Daemon CLI entry | `daemon/src/bridge.js` |
 | Virtual touchscreen | `daemon/src/uinputTouch.js` |
-| Real plugin entry point (mode toggle, IPC, panel-reconnect recovery — §35) | `shell/Service.qml`'s `_realPanelScreen`/`_forceKioskReload` |
+| Real plugin entry point (mode toggle, IPC, panel-reconnect recovery — §35, no-panel-at-boot guard — §43) | `shell/Service.qml`'s `_realPanelScreen`/`_forceKioskReload`/`_kioskEverMounted` |
 | Top-bar mode-toggle dropdown + connection status (§20, §34) | `shell/BarWidget.qml`, `shell/Service.qml`'s `deviceConnected` |
 | PA voice agent page + orchestration daemon (§22) | `shell/Pages/PaPage.qml`, `shell/Services/PaState.qml`, `shell/Services/PaBridge.qml`, `daemon/src/paBridge.js` |
 | PA's MCP tools (agent-callable panel actions) | `daemon/src/paTools/server.js` |
@@ -2131,3 +2131,58 @@ to diagnose the missing listener printed real Signal/Slack/Telegram bot tokens i
 session's context while investigating. Nothing was written anywhere from it and no value
 appears in this file, but the user was told directly and may want to rotate those
 credentials out of caution.
+
+## 43. Don't mount the kiosk window when the DK-QUAKE panel isn't physically attached (2026-10-05)
+
+Reported bug: starting the laptop without the panel plugged in still showed the kiosk
+UI (the System/Dashboard page) — on the laptop's own screen.
+
+Root cause, in `shell/Service.qml`: `panelScreen` falls back to `Quickshell.screens[0]`
+(in practice the laptop's own screen) whenever `_realPanelScreen` is undefined — an old
+dev convenience predating this session, not a "nowhere else to put it" safety net (see
+§35's own history with this same fallback). `kioskLoader.active`, though, was driven
+*only* by `root.mode === "kiosk" && !root._forceKioskReload` — it never checked whether
+a real panel was actually present. `mode` persists across restarts
+(`~/.local/state/omarchy-quake-panel/mode.json`) and defaults to `"kiosk"` even before
+that file loads. So booting with the panel unplugged: `_realPanelScreen` undefined,
+`panelScreen` resolves to the laptop's own screen, `mode` is (or defaults to) `"kiosk"`,
+and the kiosk `Loader` mounted its `PanelWindow` — Overlay layer, ignored exclusion
+zone — right over the laptop's own desktop.
+
+Fixed with one new latch, `_kioskEverMounted` (set `true` the first time the kiosk
+window actually mounts, never reset), folded into the `Loader`'s own `active`
+expression: `root.mode === "kiosk" && (root._realPanelScreen ||
+root._kioskEverMounted) && !root._forceKioskReload`. Deliberately NOT a change to
+`_realPanelScreen`, `panelScreen`, `_forceKioskReload`, or the existing
+`on_RealPanelScreenChanged` reconnect-rebuild handler from §35 — once
+`_kioskEverMounted` has latched `true` (i.e. the kiosk window has mounted against a
+real panel at least once this run), the new condition is permanently `true` and the
+expression collapses back to byte-for-byte the original, already hardware-tested one.
+This was the specific design goal: block the window from ever being *created* against
+the fallback screen before a real panel has been seen, without touching anything about
+what already happens to an *existing* kiosk window when the panel disconnects/
+reconnects mid-session (§35's hard-won "leave it alone on disconnect, force a
+teardown+rebuild on reconnect" behavior, including the screen-leak regression that
+logic was specifically written to avoid).
+
+Verified live, with the user physically unplugging and replugging the actual panel
+(not simulated): booting/restarting with the panel connected still mounts the kiosk UI
+normally (`panelScreen=DP-3` logged, screenshot confirmed real data rendering) — no
+regression for the common case. Restarting with the panel physically unplugged: the
+laptop's own screen (`eDP-1`) stayed on its ordinary desktop, confirmed via screenshot
+— no kiosk window anywhere. Plugging the panel back in while the shell kept running:
+the kiosk UI mounted on it automatically within moments, with no manual mode toggle
+and no restart — confirmed via a second screenshot showing live, updating system
+stats — and the laptop's own screen stayed clean throughout, no leak. The remaining
+case from HISTORY's own established rigor for this file — disconnecting *again* after
+a successful mount, to confirm the pre-existing "leave the window alone" behavior is
+truly untouched — was not re-run live this session (would have required a third
+physical unplug cycle); it's guaranteed by construction instead, since the latched
+expression is textually identical to the pre-fix one, not merely expected to behave
+the same.
+
+`shell/shell.qml` (the standalone dev/screenshot entry point, run manually via
+`quickshell -p shell/shell.qml`) was deliberately left untouched — it has no `mode`
+concept at all and always boots straight into kiosk UI by design, for fast dev
+iteration; it's not what runs in production via `omarchy-shell` and not what the
+reported bug was about.
