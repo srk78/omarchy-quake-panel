@@ -2284,3 +2284,26 @@ and `pomodoroRunning` lands on `false` with no auto-restart, and confirmed via `
 that the `announce` command actually drove a real `piper-tts` synthesis followed by a
 real `paplay` to the laptop's speaker sink — the full spoken-announcement pipeline
 works end to end, not just the state-machine change.
+
+## 46. Lengthen the wake-triggered recording window: 6s was cutting Foxy off mid-sentence (2026-10-22)
+
+Reported: Foxy was cutting the user off while they were still speaking.
+
+This was an already-flagged, already-understood trade-off, not a new bug —
+`daemon/src/paBridge.js`'s `CONTINUOUS_TURN_MS` (default 6000ms) is the fixed-duration
+recording window every wake-triggered (or auto-follow-up) turn uses, since Voxtype has
+no real silence/VAD auto-stop option (only a hard max-duration safety cap — checked its
+own `config schema`; see §26). NEXT_STEPS.md had already flagged this exact constant as
+"untuned" and specifically predicted 6s "cutting off longer requests" as one of the two
+possible outcomes once real usage showed which way it should move — this report is
+exactly that real-usage signal.
+
+Fix: doubled the default to `12000` (`OQP_PA_WAKEWORD_PYTHON`-style env override,
+`OQP_PA_CONTINUOUS_TURN_MS`, still available for further tuning either direction).
+Still a fixed window, not real VAD — a long enough request can still get cut off, and
+a short one now leaves a bit more dead air before the turn ends — but 12s gives
+meaningfully more room than 6s for an ordinary spoken request.
+
+Deployed and restarted with a clean journal. Not re-verified with a real long spoken
+request in this session (would need the user to deliberately speak past 6s and confirm
+the turn no longer cuts off) — flagged in `NEXT_STEPS.md` rather than claimed as tested.

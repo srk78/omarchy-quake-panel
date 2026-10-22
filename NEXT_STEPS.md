@@ -331,11 +331,12 @@ Recurring gotchas worth not rediscovering: `claude -p` needs `--system-prompt` (
   user to actually go run openWakeWord's training notebook (a Google account, a browser
   session, real time) whenever they want the real phrase; swapping the trained model in
   afterward is a one-line change in `wakeword.py`.
-- **The fixed 6-second recording window for wake-triggered turns is untuned** — see
-  `HISTORY.md` §26 for why it's fixed-duration rather than silence-detected. Worth
-  adjusting `CONTINUOUS_TURN_MS` (env-overridable) once real usage shows whether 6s is
-  too short (cutting off longer requests) or too long (awkward dead air after a short
-  one).
+- **The fixed recording window for wake-triggered turns was 6s, doubled to 12s** — see
+  `HISTORY.md` §46: real usage confirmed it really was cutting off longer requests, the
+  exact outcome this note used to flag as a possibility. Still a fixed window, not real
+  silence-detection (`HISTORY.md` §26 explains why), so a long enough request can still
+  get cut off — not yet re-verified with a real deliberately-long spoken request since
+  the change; worth 12s still being too short.
 - **Phase D — Home Assistant control — done, verified against the user's real
   instance** (see `HISTORY.md` §29): `list_ha_entities`/`propose_ha_action`/
   `confirm_pending_action`/`cancel_pending_action`, scoped to lights/switches/climate/

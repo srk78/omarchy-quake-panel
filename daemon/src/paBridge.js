@@ -101,7 +101,12 @@ const WAKEWORD_SCRIPT = path.join(__dirname, 'paTools', 'wakeword.py');
 // OQP_PA_WAKEWORD_PYTHON env var still overrides it for a setup where nanowakeword
 // genuinely lives somewhere else.
 const WAKEWORD_PYTHON = process.env.OQP_PA_WAKEWORD_PYTHON || '/usr/bin/python3';
-const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '6000', 10);
+// Was 6000 — real usage confirmed it was cutting off longer requests before they
+// finished (see NEXT_STEPS.md's own note that this was untuned and flagged exactly
+// this outcome as a possibility). Doubled rather than made unbounded: still a fixed
+// window, not real VAD (see WAKEWORD_SCRIPT's own comment above on why), so there's
+// still some ceiling — OQP_PA_CONTINUOUS_TURN_MS overrides it further.
+const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '12000', 10);
 
 // Foxy's primary brain: Stefan's own self-hosted agent harness, "Hermes." Originally
 // reached over SSH + the `hermes` CLI, which turned out to add 25-90s of pure CLI
