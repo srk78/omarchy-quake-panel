@@ -2186,3 +2186,65 @@ the same.
 concept at all and always boots straight into kiosk UI by design, for fast dev
 iteration; it's not what runs in production via `omarchy-shell` and not what the
 reported bug was about.
+
+## 44. "Hey Foxy" broke after an OS/Omarchy update: Python environment drift (2026-10-22)
+
+Reported bug: after updating the OS and Omarchy, the "Hey Foxy" wake word stopped
+working entirely.
+
+Root cause: `daemon/src/paBridge.js` spawned the wake-word listener
+(`paTools/wakeword.py`) via the bare command name `'python3'`, resolved through the
+daemon's own inherited `$PATH`. On this machine that `$PATH` has
+`~/.local/share/mise/installs/python/latest/bin` ahead of `/usr/bin` — `mise` (a
+dev-tool version manager) manages a `"latest"` Python alias that is a *moving target*,
+and the OS update moved it from whatever build was current back when this stack was
+last known-good to a fresh 3.15.1 that has never had `nanowakeword`/`sounddevice`
+installed. Reproduced live, spawning the script with the daemon's own real inherited
+`$PATH`: `ModuleNotFoundError: No module named 'numpy'` — the listener died instantly
+every time it started, so the wake word could never fire.
+
+Even the system `/usr/bin/python3` fallback wasn't clean: the update bumped the system
+`python` package to 3.14.8, and while `nanowakeword`/`sounddevice`/`onnxruntime` were
+still present under its own site-packages, their compiled dependencies (`numpy`,
+`cffi`'s `_cffi_backend`) were gone system-wide, and `pip` itself had been dropped
+entirely (`/usr/lib/python3.14/EXTERNALLY-MANAGED` present, `python-pip` missing).
+
+A second, independent casualty of the exact same drift, found while investigating the
+above: Piper (Foxy's text-to-speech voice) was also broken. `~/.local/bin/piper-tts`
+is a `uv`-tool-managed venv whose own internal `python`/`python3` symlinks pointed
+directly at `mise`'s moving `"latest"` alias rather than a fixed version — `mise`
+moving that alias silently orphaned the venv from the packages (`piper`, `numpy`,
+`onnxruntime`, …) actually installed into the old target. Reproduced:
+`.../piper-tts/bin/python -c "import piper"` → `ModuleNotFoundError: No module named
+'piper'`. Even with the wake word fixed, Foxy would still have failed to speak back.
+
+Fix:
+- `daemon/src/paBridge.js`: `WAKEWORD_PYTHON` now defaults to the explicit path
+  `/usr/bin/python3` instead of the bare command `'python3'` — `OQP_PA_WAKEWORD_PYTHON`
+  still overrides it. This doesn't fix missing packages by itself, but means a future
+  `mise` update can never again silently redirect this one invocation to an unrelated
+  interpreter — the same "pin explicit paths over trusting ambient `$PATH`" convention
+  already used for `SPEAKER_SINK`/`HERMES_API_HOST` elsewhere in this file.
+- System remediation (not this repo): `sudo pacman -S python-pip` (user ran this
+  directly — a backgrounded `--noconfirm` attempt hung silently on the underlying
+  `sudo` password prompt, which a non-interactive shell can't supply); then
+  `/usr/bin/python3 -m pip install --user --break-system-packages nanowakeword
+  sounddevice`, which pulled in the missing `numpy`/`cffi` as a side effect.
+- Piper's `uv` venv rebuilt pinned to a fixed interpreter instead of a moving one:
+  `uv tool install --force --python /usr/bin/python3 piper-tts`. Confirmed the
+  pre-existing `~/.local/bin/piper-tts` symlink (the README's own AUR-compatible name,
+  chosen to avoid colliding with an unrelated GTK app also named `piper` in the
+  official repos) now resolves through to the freshly rebuilt, working binary.
+
+Verified live in the real deployed app: after redeploying, the wake-word listener
+process (`/usr/bin/python3 .../wakeword.py`, confirmed via `ps aux` to be using the
+newly pinned path) started and stayed alive with no crash and a clean journal.
+Piper was independently confirmed working via a direct synthesis test producing a
+valid WAV file, and — as part of verifying §45 below — the full `speak()` pipeline
+(Piper synth -> `paplay` to the real speaker) was confirmed live end-to-end through the
+daemon's new `announce` command.
+
+Flagged for the user: `mise` shadowing the system `python3` on `$PATH` is a standing
+environment hazard this project can't fix from inside the repo — worth checking first
+if any other Python-based tool on this machine breaks the same way after a future
+update.

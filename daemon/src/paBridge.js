@@ -90,7 +90,17 @@ const SPEAKER_SINK = process.env.OQP_PA_SPEAKER_SINK
 // cap), so this isn't a corner that was cut in favor of something better Voxtype
 // already offered.
 const WAKEWORD_SCRIPT = path.join(__dirname, 'paTools', 'wakeword.py');
-const WAKEWORD_PYTHON = process.env.OQP_PA_WAKEWORD_PYTHON || 'python3';
+// An explicit path, not the bare command 'python3' resolved via this process's own
+// inherited $PATH — confirmed live (2026-10-22) that a `mise`-managed Python can end up
+// ahead of /usr/bin on that $PATH (e.g. after a `mise` self-update moves its own
+// "latest" alias), silently resolving this to an interpreter that's never had
+// nanowakeword/sounddevice installed. That took the wake-word listener down with no
+// error surfaced anywhere obvious — it just crashed on `import numpy` every time it
+// started. Pinning the real system interpreter here means a future ambient-$PATH
+// change can't quietly redirect this one specific invocation again; the
+// OQP_PA_WAKEWORD_PYTHON env var still overrides it for a setup where nanowakeword
+// genuinely lives somewhere else.
+const WAKEWORD_PYTHON = process.env.OQP_PA_WAKEWORD_PYTHON || '/usr/bin/python3';
 const CONTINUOUS_TURN_MS = parseInt(process.env.OQP_PA_CONTINUOUS_TURN_MS || '6000', 10);
 
 // Foxy's primary brain: Stefan's own self-hosted agent harness, "Hermes." Originally

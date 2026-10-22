@@ -21,6 +21,30 @@ UI mounts automatically, no manual toggle needed).
   true), not by a fresh physical test — worth a quick live sanity check next time the
   panel is unplugged for an unrelated reason, just to close the loop.
 
+## "Hey Foxy" wake word + Piper fixed after OS update: Python env drift — mostly done
+
+See `HISTORY.md` §44. The OS/Omarchy update left `mise`'s `"latest"` Python alias
+ahead of `/usr/bin` on `$PATH` and moved it to a version with none of the wake-word
+stack's packages installed; `daemon/src/paBridge.js` now pins `WAKEWORD_PYTHON` to
+`/usr/bin/python3` explicitly, and the missing system packages (`python-pip`,
+`numpy`, `cffi` via `nanowakeword`/`sounddevice`) were reinstalled. Piper's `uv` venv
+was independently broken by the same `mise` drift and rebuilt pinned to a fixed
+interpreter. Verified live: the wake-word listener runs stable with the new pinned
+path and a clean journal; Piper's full synth -> `paplay` pipeline confirmed working.
+
+- **Not yet done**: the literal end-to-end test from the user's own reported
+  symptom — saying "Hey Foxy" out loud, followed by a real question, and confirming
+  the wake word actually fires a turn. Everything verified so far is process-level
+  (listener stays alive, no crash) plus a separate confirmation that Piper can speak;
+  the real human-voice trigger hasn't been tried since the fix.
+- `mise` shadowing system `python3` on `$PATH` is a standing environment hazard this
+  project can't fix from inside the repo — worth checking first if any other
+  Python-based tool on this machine breaks the same way after a future update.
+- README.md's wake-word install line (`pip install --user nanowakeword sounddevice`)
+  doesn't mention that `sounddevice` pulls in a compiled dependency (`cffi`) that can
+  go missing the same way `numpy` did here — noticed during this investigation, not
+  yet corrected.
+
 ## Foxy's Hermes latency fixed: warm gateway HTTP API, not a cold CLI — done
 
 See `HISTORY.md` §42. Root-caused the reported ~30s Foxy latency (vs. Signal/Telegram's
